@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Neph-dev/october_backend/config"
+	"github.com/Neph-dev/october_backend/internal/domain/company"
+	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 )
@@ -22,26 +24,24 @@ const (
 	exitFailure     = 1
 )
 
-// Application represents our main application
 type Application struct {
-	config *config.Config
-	logger logger.Logger
-	server *http.Server
+	config    *config.Config
+	logger    logger.Logger
+	server    *http.Server
+	dbClient  *mongodb.Client
+	companyService company.Service
 }
 
 // main is the entry point of the application
 // Following NASA's rules: keep functions simple, handle all errors, no recursion
 func main() {
-	// Parse command line flags
 	healthCheck := flag.Bool("health", false, "Perform health check and exit")
 	flag.Parse()
 
-	// Handle health check
 	if *healthCheck {
 		os.Exit(performHealthCheck())
 	}
 
-	// Exit with proper code
 	os.Exit(run())
 }
 
@@ -84,11 +84,33 @@ func run() int {
 func (app *Application) initialize() error {
 	app.logger.Info("Initializing application")
 
-	// Create HTTP router
-	router := httpHandler.NewRouter(app.logger)
+	// Initialize MongoDB client
+	dbConfig := mongodb.Config{
+		URI:            app.config.Database.URI,
+		DatabaseName:   "october",
+		ConnectTimeout: 10 * time.Second,
+		PingTimeout:    5 * time.Second,
+		MaxPoolSize:    100,
+		MinPoolSize:    5,
+	}
+
+	var err error
+	app.dbClient, err = mongodb.NewClient(dbConfig, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to connect to MongoDB: %w", err)
+	}
+
+	// Initialize repositories
+	companyRepo := mongodb.NewCompanyRepository(app.dbClient.Database(), app.logger)
+
+	// Initialize services
+	app.companyService = company.NewCompanyService(companyRepo, app.logger)
+
+	// Create HTTP router with dependencies
+	router := httpHandler.NewRouter(app.logger, app.companyService)
 	router.SetupRoutes()
 
-	// Create HTTP server with timeouts (NASA rule: always set timeouts)
+	// Create HTTP server with timeouts.
 	app.server = &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", app.config.Server.Host, app.config.Server.Port),
 		Handler:      router,
@@ -135,12 +157,21 @@ func (app *Application) start() error {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
+		// Shutdown HTTP server
 		if err := app.server.Shutdown(ctx); err != nil {
 			app.logger.Error("Server forced to shutdown", "error", err)
 			return fmt.Errorf("server shutdown error: %w", err)
 		}
 
-		app.logger.Info("Server shutdown completed")
+		// Close database connection
+		if app.dbClient != nil {
+			if err := app.dbClient.Close(ctx); err != nil {
+				app.logger.Error("Failed to close database connection", "error", err)
+				// Don't return error here, as server shutdown was successful
+			}
+		}
+
+		app.logger.Info("Application shutdown completed")
 	}
 
 	return nil
@@ -159,26 +190,22 @@ func parseLogLevel(level string) slog.Level {
 	case "error":
 		return slog.LevelError
 	default:
-		// Default to info level if invalid
 		return slog.LevelInfo
 	}
 }
 
 // performHealthCheck performs a health check against the running application
 func performHealthCheck() int {
-	// Load config to get the server address
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config for health check: %v\n", err)
 		return exitFailure
 	}
 
-	// Create HTTP client with timeout
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	// Make health check request
 	url := fmt.Sprintf("http://%s:%s/health", cfg.Server.Host, cfg.Server.Port)
 	if cfg.Server.Host == "0.0.0.0" {
 		url = fmt.Sprintf("http://localhost:%s/health", cfg.Server.Port)

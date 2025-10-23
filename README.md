@@ -1,5 +1,98 @@
 # October Backend
 
+A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.21 or later
+- MongoDB 4.4 or later
+
+### Installation
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   go mod download
+   ```
+
+3. Set up environment:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. Start MongoDB (using Docker):
+   ```bash
+   docker run -d --name mongodb -p 27017:27017 mongo:latest
+   ```
+
+5. Build and run:
+   ```bash
+   make build
+   make seed-data  # Seed initial company data
+   make run
+   ```
+
+## API Endpoints
+
+### Company API
+
+#### Get Company by Name
+```bash
+GET /company/{company-name}
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Examples:**
+```bash
+# Get Lockheed Martin
+curl http://localhost:8080/company/Lockheed%20Martin
+
+# Get Raytheon Technologies  
+curl http://localhost:8080/company/Raytheon%20Technologies
+```
+
+#### Health Check
+```bash
+GET /health
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/health
+```
+
+### Pre-loaded Companies
+
+The system includes two defense/aerospace companies:
+
+1. **Lockheed Martin** (LMT)
+   - Industry: Defense
+   - Feed: https://news.lockheedmartin.com/rss
+   - Employees: 116,000
+
+2. **Raytheon Technologies** (RTX) 
+   - Industry: Aerospace
+   - Feed: https://www.rtx.com/rss-feeds/news
+   - Employees: 185,000
+
+## Architecture
+
+```
+cmd/
+├── api/main.go           # Application entry point
+└── seed/main.go          # Database seeding utility
+config/                   # Configuration management
+pkg/logger/               # Structured logging
+internal/
+├── domain/company/       # Company business logic
+├── infra/database/       # Database implementations
+└── interfaces/http/      # HTTP handlers and middleware
+```
+
 ## Running the Application
 
 ### Prerequisites

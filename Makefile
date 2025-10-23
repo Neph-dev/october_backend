@@ -1,7 +1,7 @@
 # October Backend Makefile
 # Following NASA clean code principles
 
-.PHONY: help build run test clean lint format check-security deps
+.PHONY: help build run test clean lint format check-security deps seed-data
 
 # Default target
 help: ## Show this help message
@@ -14,12 +14,18 @@ help: ## Show this help message
 build: ## Build the application binary
 	@echo "Building application..."
 	@go build -o bin/october-server ./cmd/api
-	@echo "Build complete: bin/october-server"
+	@go build -o bin/seed ./cmd/seed
+	@echo "Build complete: bin/october-server, bin/seed"
 
 # Run the application
 run: ## Run the application in development mode
 	@echo "Starting application..."
 	@go run ./cmd/api
+
+# Seed database with initial data
+seed-data: ## Seed the database with initial company data
+	@echo "Seeding database..."
+	@go run ./cmd/seed
 
 # Run with debug logging
 debug: ## Run the application with debug logging
@@ -42,7 +48,7 @@ test-coverage: ## Run tests with coverage report
 clean: ## Clean build artifacts and cache
 	@echo "Cleaning..."
 	@go clean
-	@rm -f bin/october-server
+	@rm -f bin/october-server bin/seed
 	@rm -f coverage.out coverage.html
 	@echo "Clean complete"
 
