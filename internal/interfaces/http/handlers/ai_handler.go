@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
+	"github.com/gorilla/mux"
 )
 
 // AIHandler handles AI/RAG-related HTTP requests
@@ -152,4 +154,48 @@ func (h *AIHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, me
 	}
 
 	h.writeJSONResponse(w, statusCode, errorResponse)
+}
+
+// SummarizeArticleHandler handles GET /ai/summarise/{articleId} requests
+func (h *AIHandler) SummarizeArticleHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	articleID := vars["articleId"]
+
+	if strings.TrimSpace(articleID) == "" {
+		h.writeErrorResponse(w, http.StatusBadRequest, "article ID is required")
+		return
+	}
+
+	h.logger.Info("Processing article summarization request", "article_id", articleID)
+
+	response, err := h.aiService.SummarizeArticle(r.Context(), articleID)
+	if err != nil {
+		h.logger.Error("Failed to summarize article", "error", err, "article_id", articleID)
+		
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "failed to retrieve article") {
+			h.writeErrorResponse(w, http.StatusNotFound, "article not found")
+			return
+		}
+		
+		h.writeErrorResponse(w, http.StatusInternalServerError, "failed to summarize article")
+		return
+	}
+
+	h.logger.Info("Article summarization completed successfully", 
+		"article_id", articleID,
+		"processing_time", response.ProcessingTime)
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// CacheStatsHandler handles GET /ai/cache/stats requests
+func (h *AIHandler) CacheStatsHandler(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("Getting cache statistics")
+
+	stats := h.aiService.GetCacheStats()
+
+	h.writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"cache_stats": stats,
+		"timestamp":   time.Now().UTC(),
+	})
 }

@@ -79,3 +79,31 @@ type QueryAnalysisResult struct {
 	TimeWindow *TimeWindow
 	SearchTerms []string
 }
+
+// ArticleSummaryResponse represents the AI-generated summary of an article
+type ArticleSummaryResponse struct {
+	ArticleID      string    `json:"article_id"`
+	OriginalTitle  string    `json:"original_title"`
+	Summary        string    `json:"summary"`
+	SourceURL      string    `json:"source_url"`
+	ProcessingTime time.Duration `json:"processing_time"`
+	GeneratedAt    time.Time `json:"generated_at"`
+}
+
+// CachedSummary represents a cached article summary with metadata
+type CachedSummary struct {
+	ArticleID      string    `json:"article_id"`
+	OriginalTitle  string    `json:"original_title"`
+	Summary        string    `json:"summary"`
+	SourceURL      string    `json:"source_url"`
+	CachedAt       time.Time `json:"cached_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+// SummaryCache defines the interface for caching article summaries
+type SummaryCache interface {
+	Get(articleID string) (*CachedSummary, error)
+	Set(articleID string, summary *ArticleSummaryResponse, ttl time.Duration) error
+	Delete(articleID string) error
+	Clear() error
+}

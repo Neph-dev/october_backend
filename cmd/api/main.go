@@ -16,6 +16,7 @@ import (
 	"github.com/Neph-dev/october_backend/internal/domain/company"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
 	aiInfra "github.com/Neph-dev/october_backend/internal/infra/ai"
+	"github.com/Neph-dev/october_backend/internal/infra/cache"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
 	"github.com/Neph-dev/october_backend/internal/infra/search"
@@ -127,12 +128,16 @@ func (app *Application) initialize() error {
 		app.logger,
 	)
 	
-	// Initialize AI service with Google Custom Search integration
+	// Initialize summary cache
+	summaryCache := cache.NewMemoryCache()
+	
+	// Initialize AI service with Google Custom Search integration and caching
 	openaiClient := openai.NewClient(app.config.AI.OpenAIAPIKey)
 	app.aiService = aiInfra.NewOpenAIService(
 		openaiClient,
 		app.newsService,
 		googleSearchService,
+		summaryCache,
 		app.logger,
 	)
 

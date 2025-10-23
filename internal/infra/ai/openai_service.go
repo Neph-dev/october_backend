@@ -8,6 +8,7 @@ import (
 
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
+	"github.com/Neph-dev/october_backend/internal/infra/cache"
 	"github.com/Neph-dev/october_backend/internal/infra/search"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 	"github.com/sashabaranov/go-openai"
@@ -17,16 +18,18 @@ type OpenAIService struct {
 	client         *openai.Client
 	newsService    *news.Service
 	googleSearch   *search.GoogleSearchService
+	summaryCache   ai.SummaryCache
 	model          string
 	logger         logger.Logger
 }
 
 // NewOpenAIService creates a new OpenAI service instance
-func NewOpenAIService(client *openai.Client, newsService *news.Service, googleSearch *search.GoogleSearchService, logger logger.Logger) *OpenAIService {
+func NewOpenAIService(client *openai.Client, newsService *news.Service, googleSearch *search.GoogleSearchService, summaryCache ai.SummaryCache, logger logger.Logger) *OpenAIService {
 	return &OpenAIService{
 		client:       client,
 		newsService:  newsService,
 		googleSearch: googleSearch,
+		summaryCache: summaryCache,
 		model:        openai.GPT4oMini, // Default model
 		logger:       logger,
 	}
@@ -654,4 +657,150 @@ Important: Base your answer on the provided search results. Keep responses conci
 	}
 
 	return resp.Choices[0].Message.Content, nil
+}
+
+// SummarizeArticle generates a concise summary of an article using AI
+func (s *OpenAIService) SummarizeArticle(ctx context.Context, articleID string) (*ai.ArticleSummaryResponse, error) {
+	startTime := time.Now()
+	
+	s.logger.Info("Starting article summarization", "article_id", articleID)
+
+	// Check cache first
+	if s.summaryCache != nil {
+		cachedSummary, err := s.summaryCache.Get(articleID)
+		if err != nil {
+			s.logger.Warn("Failed to check cache", "error", err, "article_id", articleID)
+		} else if cachedSummary != nil {
+			s.logger.Info("Cache hit for article summary", "article_id", articleID, "cached_at", cachedSummary.CachedAt)
+			
+			// Convert cached summary back to response format
+			response := &ai.ArticleSummaryResponse{
+				ArticleID:      cachedSummary.ArticleID,
+				OriginalTitle:  cachedSummary.OriginalTitle,
+				Summary:        cachedSummary.Summary,
+				SourceURL:      cachedSummary.SourceURL,
+				ProcessingTime: time.Since(startTime), // Time to retrieve from cache
+				GeneratedAt:    cachedSummary.CachedAt, // Use original generation time
+			}
+			
+			return response, nil
+		}
+	}
+
+	s.logger.Info("Cache miss, generating new summary", "article_id", articleID)
+
+	// Get the article by ID
+	article, err := s.newsService.GetArticleByID(ctx, articleID)
+	if err != nil {
+		s.logger.Error("Failed to retrieve article", "error", err, "article_id", articleID)
+		return nil, fmt.Errorf("failed to retrieve article: %w", err)
+	}
+
+	// Build the content to summarize (title + summary + content)
+	var contentBuilder strings.Builder
+	contentBuilder.WriteString(fmt.Sprintf("Title: %s\n\n", article.Title))
+	
+	if article.Summary != "" {
+		contentBuilder.WriteString(fmt.Sprintf("Summary: %s\n\n", article.Summary))
+	}
+	
+	if article.Content != "" {
+		contentBuilder.WriteString(fmt.Sprintf("Content: %s", article.Content))
+	} else {
+		// If no content, use the summary as the main content
+		contentBuilder.WriteString(fmt.Sprintf("Article Summary: %s", article.Summary))
+	}
+
+	systemPrompt := `You are a professional article summarizer for defense and aerospace industry professionals. 
+
+Summarize the following article in no more than 500 tokens. Keep every important fact, statement, or quote that contributes to the main message. Highlight critical lines or turning points rather than general commentary. Avoid filler or personal interpretation. The result should read like a concise executive summary written for professionals who need the essence without losing key context.
+
+Guidelines:
+- Focus on facts, numbers, quotes, and key decisions
+- Preserve specific company names, contract values, and important dates
+- Maintain technical accuracy for defense/aerospace terminology
+- Remove redundant information and commentary
+- Add some interesting statistics or data points if available such as financial figures, contract amounts, or timelines
+- Structure the summary logically with clear flow
+- Use professional, formal language suitable for industry experts
+- Keep the most impactful statements and conclusions`
+
+	userPrompt := fmt.Sprintf("Article to summarize:\n\nSource URL: %s\n\n%s", article.SourceURL, contentBuilder.String())
+
+	resp, err := s.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: s.model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: systemPrompt,
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: userPrompt,
+			},
+		},
+		MaxTokens:   600, // Allow up to 600 tokens for comprehensive summaries
+		Temperature: 0.2, // Lower temperature for more consistent, factual summaries
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to generate article summary", "error", err, "article_id", articleID)
+		return nil, fmt.Errorf("failed to generate summary: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no response from OpenAI")
+	}
+
+	summary := resp.Choices[0].Message.Content
+	processingTime := time.Since(startTime)
+
+	response := &ai.ArticleSummaryResponse{
+		ArticleID:      articleID,
+		OriginalTitle:  article.Title,
+		Summary:        summary,
+		SourceURL:      article.SourceURL,
+		ProcessingTime: processingTime,
+		GeneratedAt:    time.Now(),
+	}
+
+	// Cache the result with a 24-hour TTL
+	if s.summaryCache != nil {
+		cacheTTL := 24 * time.Hour // Cache summaries for 24 hours
+		if err := s.summaryCache.Set(articleID, response, cacheTTL); err != nil {
+			s.logger.Warn("Failed to cache summary", "error", err, "article_id", articleID)
+			// Don't fail the request if caching fails
+		} else {
+			s.logger.Info("Summary cached successfully", "article_id", articleID, "ttl", cacheTTL)
+		}
+	}
+
+	s.logger.Info("Article summarization completed", 
+		"article_id", articleID,
+		"processing_time", processingTime,
+		"summary_length", len(summary))
+
+	return response, nil
+}
+
+// GetCacheStats returns statistics about the summary cache
+func (s *OpenAIService) GetCacheStats() map[string]interface{} {
+	if s.summaryCache == nil {
+		return map[string]interface{}{
+			"status": "cache not available",
+		}
+	}
+	
+	// Try to get stats if the cache supports it
+	if memCache, ok := s.summaryCache.(*cache.MemoryCache); ok {
+		stats := memCache.GetCacheStats()
+		stats["cache_type"] = "memory"
+		stats["status"] = "active"
+		return stats
+	}
+	
+	return map[string]interface{}{
+		"status": "cache available but stats not supported",
+		"cache_type": "unknown",
+	}
 }

@@ -137,6 +137,88 @@ Search the internet for defense and aeronautics information when database contex
 - Results are filtered for credible defense industry sources
 - Used automatically by `/ai/query` when database context is insufficient
 
+### Summarize Article
+
+Generate a professional summary of an existing article in the database using AI.
+
+**Endpoint:** `GET /ai/summarise/{articleId}`
+
+**Parameters:**
+- `articleId`: The unique identifier of the article to summarize
+
+**Response:**
+```json
+{
+  "article_id": "66e8e11c0c10f7e5d0f8a5c3",
+  "original_title": "Raytheon Wins Major Defense Contract for Advanced Missile Systems",
+  "summary": "Raytheon Technologies has secured a significant contract from the U.S. Department of Defense for the development and production of next-generation missile defense systems. The contract, valued at $2.1 billion over five years, will enhance the country's defense capabilities against emerging threats. Key aspects include advanced radar integration, improved interception capabilities, and enhanced cybersecurity features. The program is expected to create 1,500 jobs across multiple facilities and strengthen partnerships with allied nations. This award demonstrates Raytheon's continued leadership in defense technology and its commitment to national security.",
+  "source_url": "https://example.com/defense-news/raytheon-contract",
+  "processing_time_ms": 1250,
+  "generated_at": "2025-01-23T15:30:45Z"
+}
+```
+
+**Error Responses:**
+
+*Article Not Found (404):*
+```json
+{
+  "error": "Article not found",
+  "message": "No article found with the provided ID"
+}
+```
+
+*Service Error (500):*
+```json
+{
+  "error": "Failed to summarize article",
+  "message": "OpenAI service temporarily unavailable"
+}
+```
+
+**Important Notes:**
+- Article must exist in the database before summarization
+- Summaries are optimized for defense and aerospace professionals
+- Summary length is limited to approximately 500 tokens
+- Rate limited to 10 requests per second
+- Processing time varies based on article length and complexity
+- **Caching**: Summaries are cached for 24 hours to improve performance and reduce OpenAI costs
+- Cache hits return instantly with minimal processing time
+
+### Cache Statistics
+
+Monitor the performance and usage of the article summary cache.
+
+**Endpoint:** `GET /ai/cache/stats`
+
+**Response:**
+```json
+{
+  "cache_stats": {
+    "total_entries": 5,
+    "expired_entries": 1,
+    "active_entries": 4,
+    "cache_type": "memory",
+    "status": "active"
+  },
+  "timestamp": "2025-01-23T15:30:45Z"
+}
+```
+
+**Cache Statistics Fields:**
+- `total_entries`: Total number of cached summaries
+- `expired_entries`: Number of expired cache entries (automatically cleaned up)
+- `active_entries`: Number of valid, unexpired cache entries
+- `cache_type`: Type of cache implementation (memory/redis)
+- `status`: Cache operational status
+- `timestamp`: Time when statistics were generated
+
+**Important Notes:**
+- Cache automatically expires entries after 24 hours
+- Expired entries are cleaned up every 5 minutes
+- Cache statistics are updated in real-time
+- Rate limited to 10 requests per second
+
 ## Query Types
 
 The AI system categorizes questions into different types:

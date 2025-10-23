@@ -56,6 +56,8 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/ai/query", r.handleAIQuery).Methods("POST")
 	r.router.HandleFunc("/ai/analyze", r.handleAIAnalyze).Methods("POST")
 	r.router.HandleFunc("/ai/web-search", r.handleAIWebSearch).Methods("POST")
+	r.router.HandleFunc("/ai/summarise/{articleId}", r.handleAISummarizeArticle).Methods("GET")
+	r.router.HandleFunc("/ai/cache/stats", r.handleAICacheStats).Methods("GET")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -133,5 +135,19 @@ func (r *Router) handleAIAnalyze(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleAIWebSearch(w http.ResponseWriter, req *http.Request) {
 	// Apply rate limiting
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.WebSearchHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleAISummarizeArticle handles GET /ai/summarise/{articleId} with rate limiting
+func (r *Router) handleAISummarizeArticle(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.SummarizeArticleHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleAICacheStats handles GET /ai/cache/stats with rate limiting
+func (r *Router) handleAICacheStats(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.CacheStatsHandler))
 	rateLimitedHandler.ServeHTTP(w, req)
 }

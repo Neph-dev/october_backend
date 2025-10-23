@@ -21,6 +21,12 @@ type Service interface {
 	
 	// SearchWeb searches the internet for defense/aeronautics information when DB context is insufficient
 	SearchWeb(ctx context.Context, query string, companies []string) ([]WebSearchSource, error)
+	
+	// SummarizeArticle generates a concise summary of an article using AI
+	SummarizeArticle(ctx context.Context, articleID string) (*ArticleSummaryResponse, error)
+	
+	// GetCacheStats returns statistics about the summary cache
+	GetCacheStats() map[string]interface{}
 }
 
 // Repository defines the interface for AI-related data operations
