@@ -8,24 +8,27 @@ import (
 
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
+	"github.com/Neph-dev/october_backend/internal/infra/search"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 	"github.com/sashabaranov/go-openai"
 )
 
 type OpenAIService struct {
-	client      *openai.Client
-	newsService *news.Service
-	model       string
-	logger      logger.Logger
+	client         *openai.Client
+	newsService    *news.Service
+	googleSearch   *search.GoogleSearchService
+	model          string
+	logger         logger.Logger
 }
 
 // NewOpenAIService creates a new OpenAI service instance
-func NewOpenAIService(client *openai.Client, newsService *news.Service, logger logger.Logger) *OpenAIService {
+func NewOpenAIService(client *openai.Client, newsService *news.Service, googleSearch *search.GoogleSearchService, logger logger.Logger) *OpenAIService {
 	return &OpenAIService{
-		client:      client,
-		newsService: newsService,
-		model:       "gpt-4o-mini", // Default model
-		logger:      logger,
+		client:       client,
+		newsService:  newsService,
+		googleSearch: googleSearch,
+		model:        "gpt-4o-mini", // Default model
+		logger:       logger,
 	}
 }
 
@@ -52,31 +55,55 @@ func (s *OpenAIService) ProcessQuery(ctx context.Context, req *ai.QueryRequest) 
 		return nil, fmt.Errorf("%w: failed to retrieve articles", ai.ErrAIService)
 	}
 
-	// Step 3: If insufficient database context, use OpenAI's knowledge directly
+	// Step 3: If insufficient database context, use Google Custom Search + OpenAI
 	if len(sources) < 3 || s.hasLowConfidenceContext(sources) {
-		s.logger.Info("Insufficient database context, using OpenAI's direct knowledge", "db_sources", len(sources))
+		s.logger.Info("Insufficient database context, using Google Custom Search + OpenAI", "db_sources", len(sources))
 		
 		// Check if the question is about defense/aeronautics companies or topics
 		if s.isDefenseAeronauticsQuestion(req.Question, analysis.CompanyNames) {
-			directResponse, err := s.generateDirectResponse(ctx, req.Question, analysis)
+			// Perform Google Custom Search
+			searchResults, err := s.googleSearch.SearchDefenseAndAerospace(ctx, req.Question)
 			if err != nil {
-				s.logger.Error("Failed to generate direct response", "error", err)
-				return nil, fmt.Errorf("%w: failed to generate direct response", ai.ErrAIService)
+				s.logger.Error("Failed to perform Google search, falling back to direct OpenAI", "error", err)
+				// Fallback to direct OpenAI response
+				directResponse, directErr := s.generateDirectResponse(ctx, req.Question, analysis)
+				if directErr != nil {
+					s.logger.Error("Failed to generate direct response", "error", directErr)
+					return nil, fmt.Errorf("%w: failed to generate response", ai.ErrAIService)
+				}
+
+				return &ai.QueryResponse{
+					Answer:              directResponse,
+					Sources:             []ai.SourceReference{},
+					WebSources:          []ai.WebSearchSource{},
+					UsedWebSearch:       false,
+					Confidence:          0.7,
+					ProcessingTime:      time.Since(startTime),
+					CompaniesReferenced: analysis.CompanyNames,
+				}, nil
 			}
 
-			// Return only the answer when using OpenAI's direct knowledge
+			// Generate response using Google search results
+			webSources := s.convertGoogleResultsToWebSources(searchResults)
+			searchResponse, err := s.generateResponseWithWebSearch(ctx, req.Question, searchResults, analysis)
+			if err != nil {
+				s.logger.Error("Failed to generate response with search results", "error", err)
+				return nil, fmt.Errorf("%w: failed to generate search-based response", ai.ErrAIService)
+			}
+
 			result := &ai.QueryResponse{
-				Answer:              directResponse,
+				Answer:              searchResponse,
 				Sources:             []ai.SourceReference{},
-				WebSources:          []ai.WebSearchSource{},
-				UsedWebSearch:       false,
-				Confidence:          0.7, // Medium confidence for direct OpenAI responses
+				WebSources:          webSources,
+				UsedWebSearch:       true,
+				Confidence:          0.8, // High confidence for search + AI combination
 				ProcessingTime:      time.Since(startTime),
 				CompaniesReferenced: analysis.CompanyNames,
 			}
 
-			s.logger.Info("Direct OpenAI response provided", 
+			s.logger.Info("Google search + OpenAI response provided", 
 				"processing_time", result.ProcessingTime,
+				"search_results", len(searchResults),
 				"confidence", result.Confidence)
 
 			return result, nil
@@ -544,7 +571,77 @@ Important: Keep responses short, direct, and to the point. Only provide informat
 				Content: question,
 			},
 		},
-		MaxTokens:   500,
+		MaxTokens:   150, // Reduced for shorter responses
+		Temperature: 0.3,
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI")
+	}
+
+	return resp.Choices[0].Message.Content, nil
+}
+
+// convertGoogleResultsToWebSources converts Google search results to WebSearchSource format
+func (s *OpenAIService) convertGoogleResultsToWebSources(results []search.GoogleSearchResult) []ai.WebSearchSource {
+	webSources := make([]ai.WebSearchSource, 0, len(results))
+	
+	for _, result := range results {
+		webSource := ai.WebSearchSource{
+			Title:   result.Title,
+			URL:     result.Link,
+			Snippet: result.Snippet,
+		}
+		webSources = append(webSources, webSource)
+	}
+	
+	return webSources
+}
+
+// generateResponseWithWebSearch generates a response using Google search results and OpenAI
+func (s *OpenAIService) generateResponseWithWebSearch(ctx context.Context, question string, searchResults []search.GoogleSearchResult, analysis *ai.QueryAnalysisResult) (string, error) {
+	// Build context from search results
+	var contextBuilder strings.Builder
+	contextBuilder.WriteString("Search Results:\n")
+	
+	for i, result := range searchResults {
+		contextBuilder.WriteString(fmt.Sprintf("%d. %s\n", i+1, result.Title))
+		contextBuilder.WriteString(fmt.Sprintf("   Source: %s\n", result.Link))
+		contextBuilder.WriteString(fmt.Sprintf("   Content: %s\n\n", result.Snippet))
+	}
+	
+	systemPrompt := `You are a research assistant. Use the provided search results context to answer accurately. 
+
+Guidelines:
+- Only answer questions about defense and aerospace companies or topics
+- Use the search results provided as your primary source of information
+- Keep responses short, direct, and to the point (1-2 sentences maximum)
+- Provide only the most essential information requested
+- Give longer answers only if specifically requested such as "explain in detail" or "provide a comprehensive overview"
+- If the search results don't contain relevant information, say so briefly
+- Always stay focused on defense and aerospace topics only
+
+Important: Base your answer on the provided search results. Keep responses concise unless detailed explanation is specifically requested.`
+
+	userPrompt := fmt.Sprintf("Question: %s\n\n%s", question, contextBuilder.String())
+
+	resp, err := s.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: s.model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: systemPrompt,
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: userPrompt,
+			},
+		},
+		MaxTokens:   300, // Moderate token limit for search-based responses
 		Temperature: 0.3,
 	})
 

@@ -39,7 +39,9 @@ type LoggerConfig struct {
 
 // AIConfig holds AI/OpenAI configuration
 type AIConfig struct {
-	OpenAIAPIKey string
+	OpenAIAPIKey           string
+	CustomSearchAPIKey     string
+	CustomSearchEngineID   string
 }
 
 // Load loads configuration from environment variables with sensible defaults
@@ -65,7 +67,9 @@ func Load() (*Config, error) {
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
 		AI: AIConfig{
-			OpenAIAPIKey: getEnv("OPENAI_API_KEY", ""),
+			OpenAIAPIKey:         getEnv("OPENAI_API_KEY", ""),
+			CustomSearchAPIKey:   getEnv("CUSTOM_SEARCH_API_KEY", ""),
+			CustomSearchEngineID: getEnv("CUSTOM_SEARCH_ENGINE_ID", ""),
 		},
 	}
 
@@ -108,6 +112,14 @@ func (c *Config) validate() error {
 
 	if c.AI.OpenAIAPIKey == "" {
 		return fmt.Errorf("OpenAI API key cannot be empty")
+	}
+
+	if c.AI.CustomSearchAPIKey == "" {
+		return fmt.Errorf("Custom Search API key cannot be empty")
+	}
+
+	if c.AI.CustomSearchEngineID == "" {
+		return fmt.Errorf("Custom Search Engine ID cannot be empty")
 	}
 
 	return nil

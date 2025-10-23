@@ -313,3 +313,9 @@ make test-ai
 - **Custom Models**: Fine-tuned models for defense industry
 - **Real-time Updates**: Stream processing for immediate insights
 - **Advanced Analytics**: Query performance and usage metrics
+
+Database Context Insufficient → Google Custom Search → OpenAI Analysis → Enhanced Response
+                    ↓
+              Defense/Aerospace Filter → Top 5 Results → GPT Research Assistant
+                    ↓
+               Structured Context → Concise Answer → Source Attribution

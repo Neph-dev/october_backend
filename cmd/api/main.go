@@ -18,6 +18,7 @@ import (
 	aiInfra "github.com/Neph-dev/october_backend/internal/infra/ai"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
+	"github.com/Neph-dev/october_backend/internal/infra/search"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 	"github.com/sashabaranov/go-openai"
@@ -119,11 +120,19 @@ func (app *Application) initialize() error {
 	app.rssService = feed.NewRSSService(app.logger.Unwrap())
 	app.processorService = feed.NewProcessorService(app.rssService, app.newsService, app.companyService, app.logger.Unwrap())
 	
-	// Initialize AI service (web search functionality has been replaced with direct OpenAI responses)
+	// Initialize Google Custom Search service
+	googleSearchService := search.NewGoogleSearchService(
+		app.config.AI.CustomSearchAPIKey,
+		app.config.AI.CustomSearchEngineID,
+		app.logger,
+	)
+	
+	// Initialize AI service with Google Custom Search integration
 	openaiClient := openai.NewClient(app.config.AI.OpenAIAPIKey)
 	app.aiService = aiInfra.NewOpenAIService(
 		openaiClient,
 		app.newsService,
+		googleSearchService,
 		app.logger,
 	)
 
