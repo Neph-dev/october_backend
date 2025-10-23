@@ -46,6 +46,7 @@ func (r *Router) SetupRoutes() {
 	// News API routes with rate limiting
 	r.router.HandleFunc("/news", r.handleNews).Methods("GET")
 	r.router.HandleFunc("/news/{id}", r.handleNewsById).Methods("GET")
+	r.router.HandleFunc("/news/company/{name}", r.handleNewsByCompany).Methods("GET")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -88,5 +89,12 @@ func (r *Router) handleNews(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleNewsById(w http.ResponseWriter, req *http.Request) {
 	// Apply rate limiting
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.newsHandler.GetNewsById))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleNewsByCompany handles GET /news/company/{name} with rate limiting
+func (r *Router) handleNewsByCompany(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.newsHandler.GetNewsByCompany))
 	rateLimitedHandler.ServeHTTP(w, req)
 }

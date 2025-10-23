@@ -40,13 +40,16 @@ func (s *CompanyService) CreateCompany(ctx context.Context, req *CreateCompanyRe
 		return nil, ErrCompanyExists
 	}
 
-	existing, err = s.repo.GetByTicker(ctx, company.Ticker)
-	if err != nil && err != ErrCompanyNotFound {
-		s.logger.Error("Failed to check existing ticker", "error", err, "ticker", company.Ticker)
-		return nil, fmt.Errorf("failed to check existing ticker: %w", err)
-	}
-	if existing != nil {
-		return nil, fmt.Errorf("%w: ticker %s already exists", ErrCompanyExists, company.Ticker)
+	// Only check ticker uniqueness if ticker is provided (not empty for government entities)
+	if strings.TrimSpace(company.Ticker) != "" {
+		existing, err = s.repo.GetByTicker(ctx, company.Ticker)
+		if err != nil && err != ErrCompanyNotFound {
+			s.logger.Error("Failed to check existing ticker", "error", err, "ticker", company.Ticker)
+			return nil, fmt.Errorf("failed to check existing ticker: %w", err)
+		}
+		if existing != nil {
+			return nil, fmt.Errorf("%w: ticker %s already exists", ErrCompanyExists, company.Ticker)
+		}
 	}
 
 	if err := s.repo.Create(ctx, company); err != nil {
@@ -132,14 +135,17 @@ func (s *CompanyService) validateCreateRequest(req *CreateCompanyRequest) error 
 	if strings.TrimSpace(req.Country) == "" {
 		return fmt.Errorf("country is required")
 	}
-	if strings.TrimSpace(req.Ticker) == "" {
-		return fmt.Errorf("ticker is required")
-	}
-	if strings.TrimSpace(req.StockExchange) == "" {
-		return fmt.Errorf("stock exchange is required")
+	// For government entities, ticker and stock exchange are optional
+	if req.Industry != IndustryGovernment {
+		if strings.TrimSpace(req.Ticker) == "" {
+			return fmt.Errorf("ticker is required for non-government entities")
+		}
+		if strings.TrimSpace(req.StockExchange) == "" {
+			return fmt.Errorf("stock exchange is required for non-government entities")
+		}
 	}
 	if !req.Industry.IsValid() {
-		return fmt.Errorf("invalid industry: must be %s or %s", IndustryDefense, IndustryAerospace)
+		return fmt.Errorf("invalid industry: must be %s, %s, or %s", IndustryDefense, IndustryAerospace, IndustryGovernment)
 	}
 	if strings.TrimSpace(req.FeedURL) == "" {
 		return fmt.Errorf("feed URL is required")

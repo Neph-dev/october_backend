@@ -80,6 +80,7 @@ func main() {
 func getCompaniesToSeed() []*company.CreateCompanyRequest {
 	// Parse dates for founding dates
 	raytheonFounded, _ := time.Parse("2006-01-02", "2020-04-03") // RTX Corporation formed
+	warDeptFounded, _ := time.Parse("2006-01-02", "1947-09-18")  // Department of Defense established
 
 	return []*company.CreateCompanyRequest{
 		{
@@ -106,6 +107,31 @@ func getCompaniesToSeed() []*company.CreateCompanyRequest {
 			},
 			Founded:      raytheonFounded,
 			NumEmployees: 185000,
+		},
+		{
+			Name:          "US War Department",
+			Country:       "United States",
+			Ticker:        "",
+			StockExchange: "",
+			Industry:      company.IndustryGovernment,
+			FeedURL:       "https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945&max=10",
+			CompanyWebsite: "https://www.war.gov",
+			KeyPeople: []company.KeyPerson{
+				{
+					FullName: "Pete Hegseth",
+					Position: "Secretary of War",
+				},
+				{
+					FullName: "General C.Q. Brown Jr.",
+					Position: "Chairman of the Joint Chiefs of Staff",
+				},
+				{
+					FullName: "Kathleen Hicks",
+					Position: "Deputy Secretary of War",
+				},
+			},
+			Founded:      warDeptFounded,
+			NumEmployees: 2870000, // Active military + civilian personnel
 		},
 	}
 }

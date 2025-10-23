@@ -14,7 +14,10 @@ type Repository interface {
 	
 	// GetByGUID retrieves an article by its GUID
 	GetByGUID(ctx context.Context, guid string) (*Article, error)
-	
+
+	// GetByCompany retrieves articles by company name
+	GetByCompany(ctx context.Context, companyName string) ([]*Article, error)
+
 	// List retrieves articles with optional filtering
 	List(ctx context.Context, filter *NewsFilter) ([]*Article, error)
 	

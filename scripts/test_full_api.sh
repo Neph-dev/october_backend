@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # October Backend API Test Script
-# Tests both Company and News APIs for Raytheon Technologies focus
+# Tests both Company and News APIs for Raytheon Technologies and US War Department
 
 echo "=== October Backend API Test Script ==="
 echo "Testing all available endpoints..."
@@ -19,27 +19,37 @@ echo "curl $BASE_URL/company/Raytheon%20Technologies"
 curl -s "$BASE_URL/company/Raytheon%20Technologies" | jq
 echo ""
 
-echo "3. News API - Get all news"
+echo "3. Company API - Get US War Department"
+echo "curl $BASE_URL/company/US%20War%20Department"
+curl -s "$BASE_URL/company/US%20War%20Department" | jq
+echo ""
+
+echo "4. News API - Get all news"
 echo "curl $BASE_URL/news"
 curl -s "$BASE_URL/news" | jq '.total, .articles[0].title // "No articles found"'
 echo ""
 
-echo "4. News API - Filter by Raytheon Technologies"
+echo "5. News API - Filter by Raytheon Technologies"
 echo "curl \"$BASE_URL/news?company=Raytheon%20Technologies\""
 curl -s "$BASE_URL/news?company=Raytheon%20Technologies" | jq '.total, .articles[].title'
 echo ""
 
-echo "5. News API - Filter by high relevance (>0.8)"
+echo "6. News API - Filter by US War Department"
+echo "curl \"$BASE_URL/news?company=US%20War%20Department\""
+curl -s "$BASE_URL/news?company=US%20War%20Department" | jq '.total, .articles[].title'
+echo ""
+
+echo "7. News API - Filter by high relevance (>0.8)"
 echo "curl \"$BASE_URL/news?min_relevance=0.8\""
 curl -s "$BASE_URL/news?min_relevance=0.8" | jq '.total, .articles[].title'
 echo ""
 
-echo "6. News API - Pagination test"
+echo "8. News API - Pagination test"
 echo "curl \"$BASE_URL/news?limit=2&offset=0\""
 curl -s "$BASE_URL/news?limit=2&offset=0" | jq '.limit, .offset, .total, .articles[].title'
 echo ""
 
-echo "7. News API - Get specific article by ID"
+echo "9. News API - Get specific article by ID"
 ARTICLE_ID=$(curl -s "$BASE_URL/news?limit=1" | jq -r '.articles[0].id // empty')
 if [ -n "$ARTICLE_ID" ]; then
   echo "curl \"$BASE_URL/news/$ARTICLE_ID\""
@@ -49,15 +59,15 @@ else
 fi
 echo ""
 
-echo "8. News API - Date filtering (today's articles)"
+echo "10. News API - Date filtering (today's articles)"
 TODAY=$(date +%Y-%m-%d)
 echo "curl \"$BASE_URL/news?start_date=$TODAY\""
 curl -s "$BASE_URL/news?start_date=$TODAY" | jq '.total, .articles[].title'
 echo ""
 
-echo "9. News API - Complex filter (Raytheon Technologies, high relevance)"
-echo "curl \"$BASE_URL/news?company=Raytheon%20Technologies&min_relevance=0.7\""
-curl -s "$BASE_URL/news?company=Raytheon%20Technologies&min_relevance=0.7" | jq '.total, .articles[].title'
+echo "11. News API - Complex filter (US War Department, high relevance)"
+echo "curl \"$BASE_URL/news?company=US%20War%20Department&min_relevance=0.7\""
+curl -s "$BASE_URL/news?company=US%20War%20Department&min_relevance=0.7" | jq '.total, .articles[].title'
 echo ""
 
 echo "=== API Test Complete ==="
@@ -74,4 +84,4 @@ echo "✅ Complex multi-filter queries working"
 echo ""
 echo "All endpoints are functioning correctly!"
 echo ""
-echo "Note: System configured for Raytheon Technologies with automatic RSS refresh every 2 hours."
+echo "Note: System configured for Raytheon Technologies and US War Department with automatic RSS refresh every 2 hours."

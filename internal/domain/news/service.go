@@ -67,6 +67,16 @@ func (s *Service) GetArticleByID(ctx context.Context, id string) (*Article, erro
 	return article, nil
 }
 
+// Get article by the Company name
+func (s *Service) GetArticlesByCompany(ctx context.Context, companyName string) ([]*Article, error) {
+	articles, err := s.repo.GetByCompany(ctx, companyName)
+	if err != nil {
+		s.logger.Error("Failed to get articles by company", "error", err, "company", companyName)
+		return nil, err
+	}
+	return articles, nil
+}
+
 // ListArticles retrieves articles with filtering
 func (s *Service) ListArticles(ctx context.Context, filter *NewsFilter) ([]*Article, int64, error) {
 	if filter == nil {

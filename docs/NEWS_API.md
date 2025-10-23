@@ -2,7 +2,7 @@
 
 ## Overview
 
-The News API provides endpoints to fetch and filter news articles collected from company RSS feeds. Articles are automatically processed and stored with relevance scoring.
+The News API provides endpoints to fetch and filter news articles collected from company RSS feeds. Articles are automatically processed and stored with relevance scoring. The system currently tracks **Raytheon Technologies** and **US War Department** news feeds.
 
 ## Data Model
 
@@ -11,7 +11,7 @@ The News API provides endpoints to fetch and filter news articles collected from
 ```json
 {
   "id": "507f1f77bcf86cd799439011",
-  "title": "Raytheon Technologies Announces New Partnership",
+  "title": "RTX Announces New Defense Partnership",
   "summary": "RTX Corporation announced a strategic partnership to develop advanced radar systems...",
   "source_url": "https://www.rtx.com/news/2024/10/23/new-partnership",
   "companies": ["Raytheon Technologies"],
@@ -44,7 +44,7 @@ Retrieve a list of news articles with optional filtering and pagination.
 
 | Parameter | Type | Description | Example |
 |-----------|------|-------------|---------|
-| `company` | string | Filter by company name | `?company=Raytheon Technologies` |
+| `company` | string | Filter by company name | `?company=Raytheon Technologies` or `?company=US War Department` |
 | `start_date` | string | Filter articles from this date (YYYY-MM-DD) | `?start_date=2024-10-01` |
 | `end_date` | string | Filter articles until this date (YYYY-MM-DD) | `?end_date=2024-10-31` |
 | `min_relevance` | float | Minimum relevance score (0.0 to 1.0) | `?min_relevance=0.7` |
@@ -104,6 +104,12 @@ Retrieve a specific news article by its ID.
 
 ```bash
 curl "http://localhost:8080/news?company=Raytheon%20Technologies&limit=10"
+```
+
+### Get Recent News for US War Department
+
+```bash
+curl "http://localhost:8080/news?company=US%20War%20Department&limit=10"
 ```
 
 ### Get News from Last Month
@@ -170,10 +176,12 @@ make process-feeds
 
 # Process specific company feed
 make process-feed COMPANY="Raytheon Technologies"
+make process-feed COMPANY="US War Department"
 
 # Direct command line usage
 ./bin/feed-processor
 ./bin/feed-processor -company="Raytheon Technologies"
+./bin/feed-processor -company="US War Department"
 ```
 
 ### Automatic Processing
@@ -210,4 +218,5 @@ Health check endpoint remains available at `/health` for overall application sta
 - **Search**: Full-text search capabilities
 - **Categorization**: Automatic article categorization (earnings, contracts, partnerships, etc.)
 - **Webhooks**: Notifications for important news based on criteria
-- **Additional Companies**: Easy expansion to include more aerospace and defense companies
+- **Additional Companies**: Easy expansion to include more aerospace, defense, and government organizations
+- **Enhanced Security**: Military-grade security features for sensitive defense information

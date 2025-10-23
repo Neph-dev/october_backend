@@ -34,10 +34,12 @@ func NewCompanyRepository(db *mongo.Database, logger logger.Logger) company.Repo
 			Options: options.Index().SetUnique(true),
 		}
 		
-		// Create unique index on ticker
+		// Create unique index on ticker (partial index, only for non-empty tickers)
 		tickerIndex := mongo.IndexModel{
 			Keys:    bson.D{{Key: "ticker", Value: 1}},
-			Options: options.Index().SetUnique(true),
+			Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.D{
+				{Key: "ticker", Value: bson.D{{Key: "$ne", Value: ""}}},
+			}),
 		}
 		
 		// Create compound index on country and industry

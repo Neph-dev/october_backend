@@ -150,3 +150,41 @@ func (h *NewsHandler) parseNewsFilter(r *http.Request) (*news.NewsFilter, error)
 
 	return filter, nil
 }
+
+// GetNewsByCompany handles GET /news/company/{name} requests
+func (h *NewsHandler) GetNewsByCompany(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	companyName := vars["name"]
+
+	if companyName == "" {
+		dto.WriteErrorResponse(w, http.StatusBadRequest, "Company name is required")
+		return
+	}
+
+	articles, err := h.newsService.GetArticlesByCompany(ctx, companyName)
+	if err != nil {
+		h.logger.Error("Failed to get articles by company", "error", err, "company", companyName)
+		dto.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve articles")
+		return
+	}
+
+	// Convert to DTOs
+	articleDTOs := make([]*dto.ArticleResponse, len(articles))
+	for i, article := range articles {
+		articleDTOs[i] = dto.ToArticleResponse(article)
+	}
+
+	response := dto.NewsListResponse{
+		Articles: articleDTOs,
+		Total:    int64(len(articles)),
+		Limit:    len(articles),
+		Offset:   0,
+	}
+
+	h.logger.Info("Successfully retrieved articles by company", 
+		"count", len(articles), 
+		"company", companyName)
+
+	dto.WriteJSONResponse(w, http.StatusOK, response)
+}	

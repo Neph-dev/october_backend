@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Company API provides endpoints to manage and retrieve defense and aerospace company information. It includes rate limiting, MongoDB integration, and comprehensive data validation following NASA's clean code principles.
+The Company API provides endpoints to manage and retrieve defense, aerospace, and government entity information. It includes rate limiting, MongoDB integration, and comprehensive data validation following NASA's clean code principles.
 
 ## Company Data Model
 
@@ -132,7 +132,7 @@ Create a new company record. This endpoint is primarily used for data seeding.
 
 ## Pre-loaded Companies
 
-The system comes with two pre-configured companies:
+The system comes with three pre-configured companies:
 
 ### 1. Lockheed Martin
 - **Name:** Lockheed Martin
@@ -149,6 +149,28 @@ The system comes with two pre-configured companies:
 - **Feed URL:** https://www.rtx.com/rss-feeds/news
 - **Key People:** Gregory J. Hayes (Chairman and CEO)
 - **Employees:** 185,000
+
+### 3. US War Department
+- **Name:** US War Department
+- **Ticker:** N/A (Government Entity)
+- **Industry:** Government
+- **Feed URL:** https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945&max=10
+- **Key People:** Pete Hegseth (Secretary of War)
+- **Employees:** 2,870,000
+
+## Supported Industries
+
+The system supports three industry types:
+
+- **Defense**: Private defense contractors (requires ticker and stock exchange)
+- **Aerospace**: Aerospace companies (requires ticker and stock exchange)  
+- **Government**: Government entities (ticker and stock exchange are optional)
+
+### Validation Rules
+
+- For **Defense** and **Aerospace** industries: Company ticker and stock exchange are required
+- For **Government** industry: Company ticker and stock exchange are optional (can be empty)
+- All other fields (name, country, feed URL, website, key people, etc.) are required for all industries
 
 ## Database Setup
 

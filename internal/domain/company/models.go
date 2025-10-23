@@ -11,8 +11,8 @@ type Company struct {
 	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Name           string             `bson:"name" json:"name" validate:"required,min=1,max=200"`
 	Country        string             `bson:"country" json:"country" validate:"required,min=2,max=100"`
-	Ticker         string             `bson:"ticker" json:"ticker" validate:"required,min=1,max=10"`
-	StockExchange  string             `bson:"stockExchange" json:"stockExchange" validate:"required,min=1,max=50"`
+	Ticker         string             `bson:"ticker" json:"ticker" validate:"omitempty,min=1,max=10"`
+	StockExchange  string             `bson:"stockExchange" json:"stockExchange" validate:"omitempty,min=1,max=50"`
 	Industry       Industry           `bson:"industry" json:"industry" validate:"required"`
 	FeedURL        string             `bson:"feedUrl" json:"feedUrl" validate:"required,url"`
 	CompanyWebsite string             `bson:"companyWebsite" json:"companyWebsite" validate:"required,url"`
@@ -27,13 +27,14 @@ type Company struct {
 type Industry string
 
 const (
-	IndustryDefense   Industry = "Defense"
-	IndustryAerospace Industry = "Aerospace"
+	IndustryDefense    Industry = "Defense"
+	IndustryAerospace  Industry = "Aerospace"
+	IndustryGovernment Industry = "Government"
 )
 
 func (i Industry) IsValid() bool {
 	switch i {
-	case IndustryDefense, IndustryAerospace:
+	case IndustryDefense, IndustryAerospace, IndustryGovernment:
 		return true
 	default:
 		return false
@@ -56,8 +57,8 @@ type CompanyMetadata struct {
 type CreateCompanyRequest struct {
 	Name           string      `json:"name" validate:"required,min=1,max=200"`
 	Country        string      `json:"country" validate:"required,min=2,max=100"`
-	Ticker         string      `json:"ticker" validate:"required,min=1,max=10"`
-	StockExchange  string      `json:"stockExchange" validate:"required,min=1,max=50"`
+	Ticker         string      `json:"ticker" validate:"omitempty,min=1,max=10"`
+	StockExchange  string      `json:"stockExchange" validate:"omitempty,min=1,max=50"`
 	Industry       Industry    `json:"industry" validate:"required"`
 	FeedURL        string      `json:"feedUrl" validate:"required,url"`
 	CompanyWebsite string      `json:"companyWebsite" validate:"required,url"`

@@ -34,7 +34,7 @@ process-feeds: ## Process RSS feeds for all companies
 	@go run ./cmd/feed-processor
 
 # Process RSS feed for specific company
-process-feed: ## Process RSS feed for specific company (usage: make process-feed COMPANY="Raytheon Technologies")
+process-feed: ## Process RSS feed for specific company (usage: make process-feed COMPANY="Raytheon Technologies" or COMPANY="US War Department")
 	@echo "Processing RSS feed for company: $(COMPANY)"
 	@go run ./cmd/feed-processor -company="$(COMPANY)"
 

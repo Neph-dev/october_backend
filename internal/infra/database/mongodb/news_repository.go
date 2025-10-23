@@ -62,6 +62,35 @@ func (r *NewsRepository) GetByGUID(ctx context.Context, guid string) (*news.Arti
 
 	return &article, nil
 }
+// GetByCompany retrieves articles by company name
+func (r *NewsRepository) GetByCompany(ctx context.Context, companyName string) ([]*news.Article, error) {
+	filter := bson.M{
+		"companies": bson.M{
+			"$in": []string{companyName},
+		},
+	}
+
+	cursor, err := r.collection.Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var articles []*news.Article
+	for cursor.Next(ctx) {
+		var article news.Article
+		if err := cursor.Decode(&article); err != nil {
+			return nil, err
+		}
+		articles = append(articles, &article)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+
+	return articles, nil
+}
 
 // List retrieves articles with optional filtering
 func (r *NewsRepository) List(ctx context.Context, filter *news.NewsFilter) ([]*news.Article, error) {
