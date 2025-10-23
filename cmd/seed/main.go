@@ -79,35 +79,9 @@ func main() {
 // getCompaniesToSeed returns the companies to seed in the database
 func getCompaniesToSeed() []*company.CreateCompanyRequest {
 	// Parse dates for founding dates
-	lockheedFounded, _ := time.Parse("2006-01-02", "1995-03-15") // Lockheed Martin Corporation formed
 	raytheonFounded, _ := time.Parse("2006-01-02", "2020-04-03") // RTX Corporation formed
 
 	return []*company.CreateCompanyRequest{
-		{
-			Name:          "Lockheed Martin",
-			Country:       "United States",
-			Ticker:        "LMT",
-			StockExchange: "NYSE",
-			Industry:      company.IndustryDefense,
-			FeedURL:       "https://news.lockheedmartin.com/rss",
-			CompanyWebsite: "https://www.lockheedmartin.com",
-			KeyPeople: []company.KeyPerson{
-				{
-					FullName: "James Taiclet",
-					Position: "Chairman, President and CEO",
-				},
-				{
-					FullName: "Jesus Malave",
-					Position: "Chief Financial Officer",
-				},
-				{
-					FullName: "Gregory M. Ulmer",
-					Position: "Executive Vice President, Aeronautics",
-				},
-			},
-			Founded:      lockheedFounded,
-			NumEmployees: 116000,
-		},
 		{
 			Name:          "Raytheon Technologies",
 			Country:       "United States",

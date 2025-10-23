@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -52,8 +51,6 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientIP := utils.GetClientIP(r)
-
-			fmt.Println("clientIP............", clientIP)
 
 			if !rl.isAllowed(clientIP) {
 				rl.logger.Warn("Rate limit exceeded",

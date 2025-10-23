@@ -2,6 +2,53 @@
 
 A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
 
+## NASA Clean Code Compliance
+
+This application follows NASA's coding standards for critical systems:
+
+1. **Avoid complex flow constructs** - No goto statements, setjmp, or recursion
+2. **No dynamic memory allocation** - All memory allocations are at startup
+3. **No functions larger than 60 lines** - All functions are kept simple and focused
+4. **Return value checking** - All function return values are checked
+5. **Limited scope** - Variables have minimal scope
+6. **Runtime assertions** - Critical assumptions are verified
+7. **Restricted preprocessor use** - Minimal macro usage
+8. **Limited pointer use** - Careful pointer management
+9. **Compile with warnings** - All warnings treated as errors
+10. **Static analysis** - Code is regularly analyzed for issues
+
+## Features
+
+### Core Infrastructure
+- **Graceful Shutdown**: Proper signal handling and resource cleanup
+- **Structured Logging**: JSON-formatted logs with context
+- **Configuration Management**: Environment-based configuration with validation
+- **Error Handling**: Comprehensive error handling and recovery
+- **Health Checks**: Built-in health monitoring endpoints
+- **Middleware**: Request logging, recovery, and security middleware
+- **Timeouts**: Proper timeout handling for all operations
+
+### Database Integration
+- **MongoDB Support**: Full MongoDB integration with connection pooling
+- **Company Management**: CRUD operations for defense/aerospace companies
+- **News Processing**: Automated RSS feed processing and article storage
+- **Data Validation**: Comprehensive input validation and sanitization
+- **Indexing**: Optimized database indexes for performance
+
+### News & RSS Features
+- **RSS Feed Processing**: Automated collection from company feeds
+- **Article Management**: Storage with deduplication and validation
+- **Sentiment Analysis**: Basic sentiment scoring for articles
+- **Relevance Scoring**: Company relevance calculation
+- **Filtering**: Advanced filtering by company, date, sentiment, and relevance
+- **Pagination**: Efficient pagination for large datasets
+
+### API Features
+- **Rate Limiting**: Token bucket algorithm with per-IP tracking
+- **RESTful Endpoints**: Clean REST API design
+- **Error Responses**: Consistent error response format
+- **Request Logging**: Detailed request/response logging
+
 ## Quick Start
 
 ### Prerequisites
@@ -60,6 +107,46 @@ curl http://localhost:8080/company/Raytheon%20Technologies
 GET /health
 ```
 
+### News API
+
+#### Get News Articles
+```bash
+GET /news
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Query Parameters:**
+- `company`: Filter by company name
+- `start_date`: Filter from date (YYYY-MM-DD)
+- `end_date`: Filter until date (YYYY-MM-DD)
+- `sentiment`: Filter by sentiment (-2 to 2)
+- `min_relevance`: Minimum relevance score (0.0 to 1.0)
+- `limit`: Number of results (default: 50, max: 1000)
+- `offset`: Pagination offset
+
+**Examples:**
+```bash
+# Get recent news for Lockheed Martin
+curl "http://localhost:8080/news?company=Lockheed%20Martin&limit=10"
+
+# Get positive news from last month
+curl "http://localhost:8080/news?sentiment=1&start_date=2024-09-23&end_date=2024-10-23"
+
+# Get high relevance news with pagination
+curl "http://localhost:8080/news?min_relevance=0.8&limit=20&offset=40"
+```
+
+#### Get Specific Article
+```bash
+GET /news/{id}
+```
+
+**Example:**
+```bash
+curl http://localhost:8080/news/507f1f77bcf86cd799439011
+```
+
 **Example:**
 ```bash
 curl http://localhost:8080/health
@@ -78,6 +165,34 @@ The system includes two defense/aerospace companies:
    - Industry: Aerospace
    - Feed: https://www.rtx.com/rss-feeds/news
    - Employees: 185,000
+
+## RSS Feed Processing
+
+The application includes automated RSS feed processing to collect and store news articles:
+
+### Processing Commands
+
+```bash
+# Seed company data first
+make seed-data
+
+# Process all company RSS feeds
+make process-feeds
+
+# Process specific company feed
+make process-feed COMPANY="Lockheed Martin"
+
+# Direct command usage
+./bin/feed-processor
+./bin/feed-processor -company="Raytheon Technologies"
+```
+
+### Article Processing Features
+
+- **Deduplication**: Articles are deduplicated using GUID or URL
+- **Sentiment Analysis**: Basic sentiment scoring (-2 to +2)
+- **Relevance Scoring**: Company relevance calculation (0.0 to 1.0)
+- **Automatic Indexing**: Database indexes for optimal query performance
 
 ## Architecture
 

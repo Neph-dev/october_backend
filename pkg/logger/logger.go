@@ -13,6 +13,7 @@ type Logger interface {
 	Warn(msg string, args ...any)
 	Debug(msg string, args ...any)
 	With(args ...any) Logger
+	Unwrap() *slog.Logger
 }
 
 // SlogLogger wraps slog.Logger to implement our Logger interface
@@ -59,4 +60,9 @@ func (l *SlogLogger) With(args ...any) Logger {
 	return &SlogLogger{
 		logger: l.logger.With(args...),
 	}
+}
+
+// Unwrap returns the underlying slog.Logger
+func (l *SlogLogger) Unwrap() *slog.Logger {
+	return l.logger
 }

@@ -13,7 +13,9 @@ import (
 
 	"github.com/Neph-dev/october_backend/config"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
+	"github.com/Neph-dev/october_backend/internal/domain/news"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
+	"github.com/Neph-dev/october_backend/internal/infra/feed"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 )
@@ -25,11 +27,14 @@ const (
 )
 
 type Application struct {
-	config    *config.Config
-	logger    logger.Logger
-	server    *http.Server
-	dbClient  *mongodb.Client
+	config         *config.Config
+	logger         logger.Logger
+	server         *http.Server
+	dbClient       *mongodb.Client
 	companyService company.Service
+	newsService    *news.Service
+	rssService     *feed.RSSService
+	processorService *feed.ProcessorService
 }
 
 // main is the entry point of the application
@@ -102,13 +107,28 @@ func (app *Application) initialize() error {
 
 	// Initialize repositories
 	companyRepo := mongodb.NewCompanyRepository(app.dbClient.Database(), app.logger)
+	newsRepo := mongodb.NewNewsRepository(app.dbClient.Database())
 
 	// Initialize services
 	app.companyService = company.NewCompanyService(companyRepo, app.logger)
+	app.newsService = news.NewService(newsRepo, app.logger.Unwrap())
+	app.rssService = feed.NewRSSService(app.logger.Unwrap())
+	app.processorService = feed.NewProcessorService(app.rssService, app.newsService, app.companyService, app.logger.Unwrap())
 
 	// Create HTTP router with dependencies
-	router := httpHandler.NewRouter(app.logger, app.companyService)
+	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService)
 	router.SetupRoutes()
+
+	// Create indexes for better performance
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	if err := newsRepo.CreateIndexes(ctx); err != nil {
+		app.logger.Error("Failed to create news indexes", "error", err)
+		// Don't fail completely, as indexes can be created later
+	} else {
+		app.logger.Info("Database indexes created successfully")
+	}
 
 	// Create HTTP server with timeouts.
 	app.server = &http.Server{
@@ -136,6 +156,9 @@ func (app *Application) start() error {
 
 	// Channel to listen for server errors
 	serverErrors := make(chan error, 1)
+
+	// Start RSS feed refresh in the background
+	go app.startRSSFeedRefresh()
 
 	// Start HTTP server in a goroutine
 	go func() {
@@ -175,6 +198,38 @@ func (app *Application) start() error {
 	}
 
 	return nil
+}
+
+// startRSSFeedRefresh starts the background RSS feed refresh process
+func (app *Application) startRSSFeedRefresh() {
+	app.logger.Info("Starting RSS feed refresh scheduler", "interval", "2 hours")
+	
+	// Create a ticker for 2 hours
+	ticker := time.NewTicker(2 * time.Hour)
+	defer ticker.Stop()
+
+	// Process feeds immediately on startup
+	app.processRSSFeeds()
+
+	// Process feeds every 2 hours
+	for range ticker.C {
+		app.processRSSFeeds()
+	}
+}
+
+// processRSSFeeds processes RSS feeds for all companies
+func (app *Application) processRSSFeeds() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	app.logger.Info("Starting scheduled RSS feed processing")
+	
+	err := app.processorService.ProcessAllCompanyFeeds(ctx)
+	if err != nil {
+		app.logger.Error("Failed to process RSS feeds", "error", err)
+	} else {
+		app.logger.Info("Completed scheduled RSS feed processing")
+	}
 }
 
 // parseLogLevel converts string log level to slog.Level

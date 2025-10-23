@@ -15,7 +15,8 @@ build: ## Build the application binary
 	@echo "Building application..."
 	@go build -o bin/october-server ./cmd/api
 	@go build -o bin/seed ./cmd/seed
-	@echo "Build complete: bin/october-server, bin/seed"
+	@go build -o bin/feed-processor ./cmd/feed-processor
+	@echo "Build complete: bin/october-server, bin/seed, bin/feed-processor"
 
 # Run the application
 run: ## Run the application in development mode
@@ -26,6 +27,21 @@ run: ## Run the application in development mode
 seed-data: ## Seed the database with initial company data
 	@echo "Seeding database..."
 	@go run ./cmd/seed
+
+# Process RSS feeds
+process-feeds: ## Process RSS feeds for all companies
+	@echo "Processing RSS feeds..."
+	@go run ./cmd/feed-processor
+
+# Process RSS feed for specific company
+process-feed: ## Process RSS feed for specific company (usage: make process-feed COMPANY="Raytheon Technologies")
+	@echo "Processing RSS feed for company: $(COMPANY)"
+	@go run ./cmd/feed-processor -company="$(COMPANY)"
+
+# Test all APIs
+test-api: ## Test all API endpoints (requires server to be running)
+	@echo "Testing API endpoints..."
+	@./scripts/test_full_api.sh
 
 # Run with debug logging
 debug: ## Run the application with debug logging
@@ -48,7 +64,7 @@ test-coverage: ## Run tests with coverage report
 clean: ## Clean build artifacts and cache
 	@echo "Cleaning..."
 	@go clean
-	@rm -f bin/october-server bin/seed
+	@rm -f bin/october-server bin/seed bin/feed-processor
 	@rm -f coverage.out coverage.html
 	@echo "Clean complete"
 
