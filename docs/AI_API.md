@@ -1,15 +1,17 @@
 # AI/RAG API Documentation
 
-The AI API provides intelligent question-answering capabilities using Retrieval-Augmented Generation (RAG) powered by OpenAI. Users can ask natural language questions about defense companies and get AI-generated responses based on the latest news articles and company information.
+The AI API provides intelligent question-answering capabilities using Retrieval-Augmented Generation (RAG) powered by OpenAI. Users can ask natural language questions about defense companies and get AI-generated responses based on the latest news articles, company information, and **web search results** for defense and aeronautics topics.
 
 ## Features
 
 - **Natural Language Processing**: Ask questions in plain English
 - **Retrieval-Augmented Generation**: Responses backed by real news articles
+- **Web Search Integration**: Automatic web search for defense/aeronautics topics when database context is insufficient
 - **Company Context**: Focus queries on specific companies
-- **Source Attribution**: See which articles were used to generate responses
+- **Source Attribution**: See which articles and web sources were used to generate responses
 - **Query Analysis**: Understand how questions are interpreted
 - **Confidence Scoring**: Assess the reliability of responses
+- **Defense-Focused**: Web search is restricted to defense and aeronautics topics only
 
 ## Prerequisites
 
@@ -94,6 +96,46 @@ Analyze a question to understand intent and extract entities without generating 
   "search_terms": ["RTX", "earnings", "quarter", "financial", "results"]
 }
 ```
+
+### Web Search for Defense Topics
+
+Search the internet for defense and aeronautics information when database context is insufficient.
+
+**Endpoint:** `POST /ai/web-search`
+
+**Request Body:**
+```json
+{
+  "question": "Latest defense contracts for Raytheon",
+  "companies": ["Raytheon Technologies"]
+}
+```
+
+**Response:**
+```json
+{
+  "question": "Latest defense contracts for Raytheon",
+  "companies": ["Raytheon Technologies"],
+  "results": [
+    {
+      "title": "Raytheon Wins $2.1B Missile Defense Contract",
+      "url": "https://defensenews.com/raytheon-missile-contract",
+      "snippet": "The Department of Defense awarded Raytheon Technologies a $2.1 billion contract for advanced missile defense systems...",
+      "source": "Defense News",
+      "published_at": "2025-10-20T00:00:00Z",
+      "relevance": 0.92
+    }
+  ],
+  "count": 1
+}
+```
+
+**Important Notes:**
+- Web search is **restricted to defense and aeronautics topics only**
+- Queries must be related to companies in the database or defense/military topics
+- Non-defense queries will be rejected with an error
+- Results are filtered for credible defense industry sources
+- Used automatically by `/ai/query` when database context is insufficient
 
 ## Query Types
 

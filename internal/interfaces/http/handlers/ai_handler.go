@@ -97,6 +97,43 @@ func (h *AIHandler) AnalyzeQueryHandler(w http.ResponseWriter, r *http.Request) 
 	h.writeJSONResponse(w, http.StatusOK, analysis)
 }
 
+// WebSearchHandler handles POST /ai/web-search requests for testing web search functionality
+func (h *AIHandler) WebSearchHandler(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Question string   `json:"question"`
+		Companies []string `json:"companies,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		h.logger.Warn("Invalid JSON in web search request", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "invalid JSON format")
+		return
+	}
+
+	if strings.TrimSpace(request.Question) == "" {
+		h.writeErrorResponse(w, http.StatusBadRequest, "question is required")
+		return
+	}
+
+	h.logger.Info("Processing web search", "question", request.Question, "companies", request.Companies)
+
+	results, err := h.aiService.SearchWeb(r.Context(), request.Question, request.Companies)
+	if err != nil {
+		h.logger.Error("Failed to perform web search", "error", err, "question", request.Question)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "failed to perform web search: "+err.Error())
+		return
+	}
+
+	response := map[string]interface{}{
+		"question": request.Question,
+		"companies": request.Companies,
+		"results": results,
+		"count": len(results),
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
 // writeJSONResponse writes a JSON response
 func (h *AIHandler) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")

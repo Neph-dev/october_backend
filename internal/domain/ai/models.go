@@ -16,6 +16,8 @@ type QueryRequest struct {
 type QueryResponse struct {
 	Answer string `json:"answer"`
 	Sources []SourceReference `json:"sources"`
+	WebSources []WebSearchSource `json:"web_sources,omitempty"`
+	UsedWebSearch bool `json:"used_web_search"`
 	Confidence float64 `json:"confidence"`
 	ProcessingTime time.Duration `json:"processing_time"`
 	CompaniesReferenced []string `json:"companies_referenced"`
@@ -30,6 +32,16 @@ type SourceReference struct {
 	PublishedDate time.Time `json:"published_date"`
 	SourceURL string `json:"source_url"`
 	RelevanceScore float64 `json:"relevance_score"`
+}
+
+// WebSearchSource represents a web search result used as context
+type WebSearchSource struct {
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	Snippet     string    `json:"snippet"`
+	Source      string    `json:"source"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+	Relevance   float64   `json:"relevance"`
 }
 
 // QueryContext represents processed context for the AI query

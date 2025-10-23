@@ -52,8 +52,9 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/news/company/{name}", r.handleNewsByCompany).Methods("GET")
 	
 	// AI/RAG API routes with rate limiting
-	r.router.HandleFunc("/ai/ask", r.handleAIQuery).Methods("POST")
+	r.router.HandleFunc("/ai/query", r.handleAIQuery).Methods("POST")
 	r.router.HandleFunc("/ai/analyze", r.handleAIAnalyze).Methods("POST")
+	r.router.HandleFunc("/ai/web-search", r.handleAIWebSearch).Methods("POST")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -117,5 +118,12 @@ func (r *Router) handleAIQuery(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleAIAnalyze(w http.ResponseWriter, req *http.Request) {
 	// Apply rate limiting
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.AnalyzeQueryHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleAIWebSearch handles POST /ai/web-search with rate limiting
+func (r *Router) handleAIWebSearch(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.WebSearchHandler))
 	rateLimitedHandler.ServeHTTP(w, req)
 }

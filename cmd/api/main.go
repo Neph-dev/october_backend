@@ -20,6 +20,7 @@ import (
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
+	"github.com/sashabaranov/go-openai"
 )
 
 const (
@@ -118,12 +119,12 @@ func (app *Application) initialize() error {
 	app.rssService = feed.NewRSSService(app.logger.Unwrap())
 	app.processorService = feed.NewProcessorService(app.rssService, app.newsService, app.companyService, app.logger.Unwrap())
 	
-	// Initialize AI service
+	// Initialize AI service (web search functionality has been replaced with direct OpenAI responses)
+	openaiClient := openai.NewClient(app.config.AI.OpenAIAPIKey)
 	app.aiService = aiInfra.NewOpenAIService(
-		app.config.AI.OpenAIAPIKey,
+		openaiClient,
 		app.newsService,
-		app.companyService,
-		app.logger.Unwrap(),
+		app.logger,
 	)
 
 	// Create HTTP router with dependencies

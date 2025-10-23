@@ -18,6 +18,9 @@ type Service interface {
 	
 	// AnalyzeQuery analyzes the query to extract intent, companies, and search terms
 	AnalyzeQuery(ctx context.Context, question string) (*QueryAnalysisResult, error)
+	
+	// SearchWeb searches the internet for defense/aeronautics information when DB context is insufficient
+	SearchWeb(ctx context.Context, query string, companies []string) ([]WebSearchSource, error)
 }
 
 // Repository defines the interface for AI-related data operations

@@ -53,10 +53,13 @@ This application follows NASA's coding standards for critical systems:
 - **Natural Language Queries**: Ask questions in plain English about companies
 - **OpenAI Integration**: Powered by GPT-4o-mini for cost-effective AI responses
 - **Retrieval-Augmented Generation**: Responses backed by real news articles
+- **Web Search Integration**: Automatic internet search for company-related topics when database context is insufficient
+- **Company-Based Validation**: Web search allowed for ANY question about companies in our database
 - **Query Analysis**: Intelligent parsing of user intent and entities
-- **Source Attribution**: See which articles were used for each response
+- **Source Attribution**: See which articles and web sources were used for each response
 - **Confidence Scoring**: Reliability assessment for AI-generated answers
-- **Company Context**: Focus queries on specific defense contractors
+- **Company Context**: Focus queries on specific companies in the database
+- **AI-Powered Filtering**: Let OpenAI's intelligence handle response appropriateness
 
 ## Quick Start
 
@@ -211,6 +214,28 @@ curl -X POST http://localhost:8080/ai/analyze \
   -H "Content-Type: application/json" \
   -d '{"question": "What were RTX earnings this quarter?"}'
 ```
+
+#### Web Search for Defense Topics
+```bash
+POST /ai/web-search
+```
+
+**Request Body:**
+```json
+{
+  "question": "Latest defense contracts for Raytheon",
+  "companies": ["Raytheon Technologies"]
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/ai/web-search \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Latest defense contracts for Raytheon", "companies": ["Raytheon Technologies"]}'
+```
+
+**Note:** Web search is allowed for ANY question about companies that exist in our database. OpenAI's intelligence handles response appropriateness.
 
 #### Health Check
 ```bash
