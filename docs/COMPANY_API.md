@@ -36,6 +36,80 @@ Each company includes the following information:
 
 ## API Endpoints
 
+### Get All Companies
+
+Retrieve a paginated list of all companies in the system.
+
+**Endpoint:** `GET /companies`
+
+**Rate Limiting:** 10 requests per second, burst of 20
+
+**Query Parameters:**
+- `limit` (optional): Number of companies to return (default: 20, max: 100)
+- `offset` (optional): Number of companies to skip (default: 0)
+
+**Examples:**
+```bash
+# Get first 20 companies (default)
+curl http://localhost:8080/companies
+
+# Get first 10 companies
+curl http://localhost:8080/companies?limit=10
+
+# Get companies 21-40 (pagination)
+curl http://localhost:8080/companies?limit=20&offset=20
+
+# Get maximum companies per request
+curl http://localhost:8080/companies?limit=100
+```
+
+**Responses:**
+
+**200 OK:**
+```json
+{
+  "companies": [
+    {
+      "id": "507f1f77bcf86cd799439011",
+      "name": "Lockheed Martin",
+      "country": "United States",
+      "ticker": "LMT",
+      "stockExchange": "NYSE",
+      "industry": "Defense",
+      "feedUrl": "https://news.lockheedmartin.com/rss",
+      "companyWebsite": "https://www.lockheedmartin.com",
+      "keyPeople": [
+        {
+          "fullName": "James Taiclet",
+          "position": "Chairman, President and CEO"
+        }
+      ],
+      "founded": "1995-03-15T00:00:00Z",
+      "numEmployees": 116000,
+      "metadata": {
+        "lastFeedUpdate": "2025-10-23T12:00:00Z",
+        "isActive": true,
+        "tags": []
+      }
+    }
+  ],
+  "pagination": {
+    "limit": 20,
+    "offset": 0,
+    "count": 1
+  }
+}
+```
+
+**429 Too Many Requests:**
+```json
+{
+  "error": true,
+  "message": "rate limit exceeded",
+  "status": 429
+}
+```
+
 ### Get Company by Name
 
 Retrieve company information by company name.
@@ -309,8 +383,9 @@ The company API implementation follows NASA's clean code rules:
 
 ## Future Enhancements
 
-- **Pagination:** Add pagination support for company listings
 - **Search:** Implement full-text search capabilities
+- **Filtering:** Add filtering by industry, country, or other attributes
+- **Sorting:** Add sorting capabilities (by name, founded date, employees, etc.)
 - **Caching:** Add Redis caching for frequently accessed data
 - **Authentication:** Add API key or OAuth authentication
 - **Audit Logging:** Track all data modifications

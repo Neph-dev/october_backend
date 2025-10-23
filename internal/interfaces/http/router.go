@@ -43,6 +43,7 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/health", r.handleHealth).Methods("GET")
 	
 	// Company API routes with rate limiting
+	r.router.HandleFunc("/companies", r.handleGetAllCompanies).Methods("GET")
 	r.router.HandleFunc("/company/{name}", r.handleCompanyByName).Methods("GET")
 	r.router.HandleFunc("/companies", r.handleCompanies).Methods("POST")
 	
@@ -78,6 +79,13 @@ func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleCompanyByName(w http.ResponseWriter, req *http.Request) {
 	// Apply rate limiting
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.companyHandler.GetCompanyByName))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleGetAllCompanies handles GET /companies with rate limiting
+func (r *Router) handleGetAllCompanies(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.companyHandler.GetAllCompanies))
 	rateLimitedHandler.ServeHTTP(w, req)
 }
 

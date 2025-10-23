@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Neph-dev/october_backend/internal/domain/company"
@@ -55,6 +56,51 @@ func (h *CompanyHandler) GetCompanyByName(w http.ResponseWriter, r *http.Request
 	}
 
 	h.writeJSONResponse(w, http.StatusOK, companyResp)
+}
+
+// GET /companies - Get all companies with optional pagination
+func (h *CompanyHandler) GetAllCompanies(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("Getting all companies", "client_ip", utils.GetClientIP(r))
+
+	// Parse pagination parameters
+	query := r.URL.Query()
+	limit := 20  // default limit
+	offset := 0  // default offset
+
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			if parsedLimit > 100 {
+				parsedLimit = 100 // max limit
+			}
+			limit = parsedLimit
+		}
+	}
+
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Get companies from service
+	companies, err := h.service.ListCompanies(r.Context(), limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to get all companies", "error", err, "limit", limit, "offset", offset)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	// Create response with pagination info
+	response := map[string]interface{}{
+		"companies": companies,
+		"pagination": map[string]interface{}{
+			"limit":  limit,
+			"offset": offset,
+			"count":  len(companies),
+		},
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
 }
 
 func (h *CompanyHandler) CreateCompany(w http.ResponseWriter, r *http.Request) {
