@@ -27,7 +27,7 @@ func NewOpenAIService(client *openai.Client, newsService *news.Service, googleSe
 		client:       client,
 		newsService:  newsService,
 		googleSearch: googleSearch,
-		model:        "gpt-4o-mini", // Default model
+		model:        openai.GPT4oMini, // Default model
 		logger:       logger,
 	}
 }
