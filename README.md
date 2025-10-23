@@ -49,12 +49,22 @@ This application follows NASA's coding standards for critical systems:
 - **Error Responses**: Consistent error response format
 - **Request Logging**: Detailed request/response logging
 
+### AI/RAG Features
+- **Natural Language Queries**: Ask questions in plain English about companies
+- **OpenAI Integration**: Powered by GPT-4o-mini for cost-effective AI responses
+- **Retrieval-Augmented Generation**: Responses backed by real news articles
+- **Query Analysis**: Intelligent parsing of user intent and entities
+- **Source Attribution**: See which articles were used for each response
+- **Confidence Scoring**: Reliability assessment for AI-generated answers
+- **Company Context**: Focus queries on specific defense contractors
+
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.21 or later
 - MongoDB 4.4 or later
+- OpenAI API key (for AI/RAG features)
 
 ### Installation
 
@@ -67,7 +77,8 @@ This application follows NASA's coding standards for critical systems:
 3. Set up environment:
    ```bash
    cp .env.example .env
-   # Edit .env with your configuration
+   # Edit .env with your configuration, including:
+   # OPENAI_API_KEY=your_openai_api_key_here
    ```
 
 4. Start MongoDB (using Docker):
@@ -145,6 +156,65 @@ GET /news/{id}
 **Example:**
 ```bash
 curl http://localhost:8080/news/507f1f77bcf86cd799439011
+```
+
+### AI/RAG API
+
+#### Ask AI Questions
+```bash
+POST /ai/query
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Request Body:**
+```json
+{
+  "question": "How did RTX perform this quarter?",
+  "company_context": ["Raytheon Technologies"]
+}
+```
+
+**Examples:**
+```bash
+# Financial performance query
+curl -X POST http://localhost:8080/ai/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How did RTX perform this quarter?"}'
+
+# Defense contracts query
+curl -X POST http://localhost:8080/ai/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What defense contracts did RTX recently win?"}'
+
+# Military developments query
+curl -X POST http://localhost:8080/ai/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are the latest military training developments?", "company_context": ["US War Department"]}'
+```
+
+#### Analyze Query Intent
+```bash
+POST /ai/analyze
+```
+
+**Request Body:**
+```json
+{
+  "question": "What were RTX earnings this quarter?"
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/ai/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What were RTX earnings this quarter?"}'
+```
+
+#### Health Check
+```bash
+GET /health
 ```
 
 **Example:**

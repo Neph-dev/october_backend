@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
 	"github.com/Neph-dev/october_backend/internal/interfaces/http/handlers"
@@ -18,10 +19,11 @@ type Router struct {
 	router         *mux.Router
 	companyHandler *handlers.CompanyHandler
 	newsHandler    *handlers.NewsHandler
+	aiHandler      *handlers.AIHandler
 	rateLimiter    *middleware.RateLimiter
 }
 
-func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service) *Router {
+func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service, aiService ai.Service) *Router {
 	// Create rate limiter: 10 requests per second, burst of 20
 	rateLimiter := middleware.NewRateLimiter(10.0, 20, logger)
 	
@@ -30,6 +32,7 @@ func NewRouter(logger logger.Logger, companyService company.Service, newsService
 		router:         mux.NewRouter(),
 		companyHandler: handlers.NewCompanyHandler(companyService, logger),
 		newsHandler:    handlers.NewNewsHandler(newsService, logger.Unwrap()),
+		aiHandler:      handlers.NewAIHandler(aiService, logger.Unwrap()),
 		rateLimiter:    rateLimiter,
 	}
 }
@@ -47,6 +50,10 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/news", r.handleNews).Methods("GET")
 	r.router.HandleFunc("/news/{id}", r.handleNewsById).Methods("GET")
 	r.router.HandleFunc("/news/company/{name}", r.handleNewsByCompany).Methods("GET")
+	
+	// AI/RAG API routes with rate limiting
+	r.router.HandleFunc("/ai/ask", r.handleAIQuery).Methods("POST")
+	r.router.HandleFunc("/ai/analyze", r.handleAIAnalyze).Methods("POST")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -96,5 +103,19 @@ func (r *Router) handleNewsById(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleNewsByCompany(w http.ResponseWriter, req *http.Request) {
 	// Apply rate limiting
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.newsHandler.GetNewsByCompany))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleAIQuery handles POST /ai/query with rate limiting
+func (r *Router) handleAIQuery(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting (stricter for AI endpoints due to cost)
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.QueryHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleAIAnalyze handles POST /ai/analyze with rate limiting
+func (r *Router) handleAIAnalyze(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.AnalyzeQueryHandler))
 	rateLimitedHandler.ServeHTTP(w, req)
 }

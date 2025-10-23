@@ -2,9 +2,12 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds all configuration for our application
@@ -12,6 +15,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Logger   LoggerConfig
+	AI       AIConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -33,8 +37,19 @@ type LoggerConfig struct {
 	Level string
 }
 
+// AIConfig holds AI/OpenAI configuration
+type AIConfig struct {
+	OpenAIAPIKey string
+}
+
 // Load loads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Warning: .env file not found, proceeding with existing environment variables")
+		return nil, err
+	}
+
 	config := &Config{
 		Server: ServerConfig{
 			Host:         getEnv("SERVER_HOST", "0.0.0.0"),
@@ -48,6 +63,9 @@ func Load() (*Config, error) {
 		},
 		Logger: LoggerConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
+		},
+		AI: AIConfig{
+			OpenAIAPIKey: getEnv("OPENAI_API_KEY", ""),
 		},
 	}
 
@@ -86,6 +104,10 @@ func (c *Config) validate() error {
 
 	if !validLogLevels[c.Logger.Level] {
 		return fmt.Errorf("invalid log level: %s", c.Logger.Level)
+	}
+
+	if c.AI.OpenAIAPIKey == "" {
+		return fmt.Errorf("OpenAI API key cannot be empty")
 	}
 
 	return nil

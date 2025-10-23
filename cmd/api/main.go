@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/Neph-dev/october_backend/config"
+	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
+	aiInfra "github.com/Neph-dev/october_backend/internal/infra/ai"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
@@ -33,6 +35,7 @@ type Application struct {
 	dbClient       *mongodb.Client
 	companyService company.Service
 	newsService    *news.Service
+	aiService      ai.Service
 	rssService     *feed.RSSService
 	processorService *feed.ProcessorService
 }
@@ -114,9 +117,17 @@ func (app *Application) initialize() error {
 	app.newsService = news.NewService(newsRepo, app.logger.Unwrap())
 	app.rssService = feed.NewRSSService(app.logger.Unwrap())
 	app.processorService = feed.NewProcessorService(app.rssService, app.newsService, app.companyService, app.logger.Unwrap())
+	
+	// Initialize AI service
+	app.aiService = aiInfra.NewOpenAIService(
+		app.config.AI.OpenAIAPIKey,
+		app.newsService,
+		app.companyService,
+		app.logger.Unwrap(),
+	)
 
 	// Create HTTP router with dependencies
-	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService)
+	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService, app.aiService)
 	router.SetupRoutes()
 
 	// Create indexes for better performance

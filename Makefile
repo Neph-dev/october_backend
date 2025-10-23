@@ -43,6 +43,11 @@ test-api: ## Test all API endpoints (requires server to be running)
 	@echo "Testing API endpoints..."
 	@./scripts/test_full_api.sh
 
+# Test AI/RAG APIs
+test-ai: ## Test AI/RAG endpoints (requires server running and OPENAI_API_KEY set)
+	@echo "Testing AI/RAG endpoints..."
+	@./scripts/test_ai_api.sh
+
 # Run with debug logging
 debug: ## Run the application with debug logging
 	@echo "Starting application with debug logging..."
