@@ -1,5 +1,7 @@
 # October Backend
 
+### 🎥 [Watch the demo video](https://drive.proton.me/urls/RMB3TPKAWW#qua3g7VXghOJ)
+
 A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
 
 ## NASA Clean Code Compliance
