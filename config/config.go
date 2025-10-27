@@ -16,6 +16,7 @@ type Config struct {
 	Database DatabaseConfig
 	Logger   LoggerConfig
 	AI       AIConfig
+	Market   MarketConfig
 }
 
 // ServerConfig holds server-specific configuration
@@ -44,6 +45,11 @@ type AIConfig struct {
 	CustomSearchEngineID   string
 }
 
+// MarketConfig holds market data configuration
+type MarketConfig struct {
+	FinnhubAPIKey string
+}
+
 // Load loads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
 	err := godotenv.Load()
@@ -70,6 +76,9 @@ func Load() (*Config, error) {
 			OpenAIAPIKey:         getEnv("OPENAI_API_KEY", ""),
 			CustomSearchAPIKey:   getEnv("CUSTOM_SEARCH_API_KEY", ""),
 			CustomSearchEngineID: getEnv("CUSTOM_SEARCH_ENGINE_ID", ""),
+		},
+		Market: MarketConfig{
+			FinnhubAPIKey: getEnv("FINNHUB_API_KEY", ""),
 		},
 	}
 
@@ -120,6 +129,10 @@ func (c *Config) validate() error {
 
 	if c.AI.CustomSearchEngineID == "" {
 		return fmt.Errorf("Custom Search Engine ID cannot be empty")
+	}
+
+	if c.Market.FinnhubAPIKey == "" {
+		return fmt.Errorf("Finnhub API key cannot be empty")
 	}
 
 	return nil

@@ -14,11 +14,13 @@ import (
 	"github.com/Neph-dev/october_backend/config"
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
+	"github.com/Neph-dev/october_backend/internal/domain/market"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
 	aiInfra "github.com/Neph-dev/october_backend/internal/infra/ai"
 	"github.com/Neph-dev/october_backend/internal/infra/cache"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
+	marketInfra "github.com/Neph-dev/october_backend/internal/infra/market"
 	"github.com/Neph-dev/october_backend/internal/infra/search"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
@@ -39,6 +41,7 @@ type Application struct {
 	companyService company.Service
 	newsService    *news.Service
 	aiService      ai.Service
+	marketService  market.Service
 	rssService     *feed.RSSService
 	processorService *feed.ProcessorService
 }
@@ -141,8 +144,16 @@ func (app *Application) initialize() error {
 		app.logger,
 	)
 
+	// Initialize market service with Finnhub integration
+	finnhubService := marketInfra.NewFinnhubService(app.config.Market.FinnhubAPIKey, app.logger)
+	app.marketService = marketInfra.NewMarketService(
+		finnhubService,
+		companyRepo,
+		app.logger,
+	)
+
 	// Create HTTP router with dependencies
-	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService, app.aiService)
+	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService, app.aiService, app.marketService)
 	router.SetupRoutes()
 
 	// Create indexes for better performance

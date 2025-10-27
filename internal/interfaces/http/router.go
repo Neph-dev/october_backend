@@ -6,6 +6,7 @@ import (
 
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
+	"github.com/Neph-dev/october_backend/internal/domain/market"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
 	"github.com/Neph-dev/october_backend/internal/interfaces/http/handlers"
 	"github.com/Neph-dev/october_backend/internal/interfaces/http/middleware"
@@ -20,10 +21,11 @@ type Router struct {
 	companyHandler *handlers.CompanyHandler
 	newsHandler    *handlers.NewsHandler
 	aiHandler      *handlers.AIHandler
+	marketHandler  *handlers.MarketHandler
 	rateLimiter    *middleware.RateLimiter
 }
 
-func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service, aiService ai.Service) *Router {
+func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service, aiService ai.Service, marketService market.Service) *Router {
 	// Create rate limiter: 10 requests per second, burst of 20
 	rateLimiter := middleware.NewRateLimiter(10.0, 20, logger)
 	
@@ -33,6 +35,7 @@ func NewRouter(logger logger.Logger, companyService company.Service, newsService
 		companyHandler: handlers.NewCompanyHandler(companyService, logger),
 		newsHandler:    handlers.NewNewsHandler(newsService, logger.Unwrap()),
 		aiHandler:      handlers.NewAIHandler(aiService, logger.Unwrap()),
+		marketHandler:  handlers.NewMarketHandler(marketService, logger.Unwrap()),
 		rateLimiter:    rateLimiter,
 	}
 }
@@ -58,6 +61,11 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/ai/web-search", r.handleAIWebSearch).Methods("POST")
 	r.router.HandleFunc("/ai/summarise/{articleId}", r.handleAISummarizeArticle).Methods("GET")
 	r.router.HandleFunc("/ai/cache/stats", r.handleAICacheStats).Methods("GET")
+	
+	// Market Data API routes with rate limiting
+	r.router.HandleFunc("/market/quote/{ticker}", r.handleMarketQuote).Methods("GET")
+	r.router.HandleFunc("/market/quotes", r.handleMarketQuotes).Methods("GET")
+	r.router.HandleFunc("/market/tickers", r.handleMarketTickers).Methods("GET")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -151,3 +159,30 @@ func (r *Router) handleAICacheStats(w http.ResponseWriter, req *http.Request) {
 	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.aiHandler.CacheStatsHandler))
 	rateLimitedHandler.ServeHTTP(w, req)
 }
+
+// Market Data Handlers
+
+// handleMarketQuote handles GET /market/quote/{ticker} with rate limiting
+func (r *Router) handleMarketQuote(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.marketHandler.GetQuoteHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleMarketQuotes handles GET /market/quotes with rate limiting
+func (r *Router) handleMarketQuotes(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.marketHandler.GetQuotesHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+// handleMarketTickers handles GET /market/tickers with rate limiting
+func (r *Router) handleMarketTickers(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.marketHandler.GetAvailableTickersHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}
+
+
+
+
