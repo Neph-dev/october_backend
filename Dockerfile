@@ -2,7 +2,7 @@
 # Following NASA security and reliability principles
 
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 # Install security updates and required tools
 RUN apk update && apk add --no-cache git ca-certificates tzdata && update-ca-certificates
