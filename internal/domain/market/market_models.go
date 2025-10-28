@@ -50,10 +50,13 @@ type CompanyProfile struct {
 
 // MarketStatus represents overall market status
 type MarketStatus struct {
-	Exchange   string    `json:"exchange"`
-	Timezone   string    `json:"timezone"`
-	IsOpen     bool      `json:"is_open"`
-	SessionEnd time.Time `json:"session_end"`
+	Exchange   string     `json:"exchange"`
+	Timezone   string     `json:"timezone"`
+	IsOpen     bool       `json:"is_open"`
+	Session    string     `json:"session"`
+	Holiday    *string    `json:"holiday,omitempty"`
+	SessionEnd time.Time  `json:"session_end"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // TradingViewData represents data formatted for Trading View widgets
@@ -94,6 +97,16 @@ type FinnhubQuoteResponse struct {
 	OpenPrice      float64 `json:"o"`  // Open price of the day
 	PreviousClose  float64 `json:"pc"` // Previous close price
 	Timestamp      int64   `json:"t"`  // UNIX timestamp
+}
+
+// FinnhubMarketStatusResponse represents Finnhub market status response
+type FinnhubMarketStatusResponse struct {
+	Exchange string  `json:"exchange"`
+	Holiday  *string `json:"holiday"`
+	IsOpen   bool    `json:"isOpen"`
+	Session  string  `json:"session"`
+	T        int64   `json:"t"`
+	Timezone string  `json:"timezone"`
 }
 
 // FinnhubCompanyProfileResponse represents Finnhub company profile response

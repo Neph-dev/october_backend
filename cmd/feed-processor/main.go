@@ -54,7 +54,8 @@ func main() {
 	companyService := company.NewCompanyService(companyRepo, appLogger)
 	newsService := news.NewService(newsRepo, appLogger.Unwrap())
 	rssService := feed.NewRSSService(appLogger.Unwrap())
-	processorService := feed.NewProcessorService(rssService, newsService, companyService, appLogger.Unwrap())
+	webScraperService := feed.NewWebScraperService(appLogger.Unwrap())
+	processorService := feed.NewProcessorService(rssService, webScraperService, newsService, companyService, appLogger.Unwrap())
 
 	// Create indexes if needed
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

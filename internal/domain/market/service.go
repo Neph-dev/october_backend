@@ -21,6 +21,9 @@ type Service interface {
 	
 	// GetAvailableTickers retrieves available tickers from stored companies
 	GetAvailableTickers(ctx context.Context) (*AvailableTickersResponse, error)
+	
+	// GetMarketStatus retrieves current market status for a given exchange
+	GetMarketStatus(ctx context.Context, exchange string) (*MarketStatus, error)
 }
 
 type ExternalMarketAPI interface {
@@ -29,4 +32,7 @@ type ExternalMarketAPI interface {
 	
 	// GetCompanyProfile fetches company profile from external API
 	GetCompanyProfile(ctx context.Context, ticker string) (*CompanyProfile, error)
+	
+	// GetMarketStatus fetches market status from external API
+	GetMarketStatus(ctx context.Context, exchange string) (*MarketStatus, error)
 }

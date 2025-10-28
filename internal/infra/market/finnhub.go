@@ -16,8 +16,9 @@ const (
 	finnhubBaseURL = "https://finnhub.io/api/v1"
 	
 	// API endpoints
-	finnhubQuoteEndpoint   = "/quote"
-	finnhubProfileEndpoint = "/stock/profile2"
+	finnhubQuoteEndpoint        = "/quote"
+	finnhubProfileEndpoint      = "/stock/profile2"
+	finnhubMarketStatusEndpoint = "/stock/market-status"
 )
 
 // FinnhubService implements ExternalMarketAPI for Finnhub integration
@@ -125,37 +126,41 @@ func (f *FinnhubService) GetCompanyProfile(ctx context.Context, ticker string) (
 	return profile, nil
 }
 
-// GetMarketStatus checks if market is open
-func (f *FinnhubService) GetMarketStatus(ctx context.Context) (*market.MarketStatus, error) {
-	// Finnhub doesn't have a specific market status endpoint, so we use time-based logic
-	now := time.Now().In(time.FixedZone("EST", -5*3600)) // Eastern Time
-	hour := now.Hour()
-	weekday := now.Weekday()
+// GetMarketStatus fetches market status from Finnhub API
+func (f *FinnhubService) GetMarketStatus(ctx context.Context, exchange string) (*market.MarketStatus, error) {
+	f.logger.Info("Fetching market status from Finnhub", "exchange", exchange)
 	
-	// US market hours: 9:30 AM - 4:00 PM EST, Monday-Friday
-	isOpen := weekday >= time.Monday && weekday <= time.Friday &&
-		((hour == 9 && now.Minute() >= 30) || (hour > 9 && hour < 16) || (hour == 16 && now.Minute() == 0))
-	
-	// Calculate next session end
-	var sessionEnd time.Time
-	if isOpen {
-		sessionEnd = time.Date(now.Year(), now.Month(), now.Day(), 16, 0, 0, 0, now.Location())
-	} else {
-		// Next business day at 4 PM
-		sessionEnd = time.Date(now.Year(), now.Month(), now.Day(), 16, 0, 0, 0, now.Location())
-		for sessionEnd.Weekday() == time.Saturday || sessionEnd.Weekday() == time.Sunday {
-			sessionEnd = sessionEnd.Add(24 * time.Hour)
-		}
+	u, err := f.buildURL(finnhubMarketStatusEndpoint, map[string]string{
+		"exchange": exchange,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build URL: %w", err)
 	}
 
-	status := &market.MarketStatus{
-		Exchange:   "NYSE",
-		Timezone:   "America/New_York",
-		IsOpen:     isOpen,
-		SessionEnd: sessionEnd,
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	f.logger.Info("Market status checked", "is_open", isOpen)
+	resp, err := f.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	var finnhubResponse market.FinnhubMarketStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&finnhubResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Convert Finnhub response to our standard format
+	status := f.convertFinnhubMarketStatus(finnhubResponse)
+
+	f.logger.Info("Market status fetched successfully", "exchange", exchange, "is_open", status.IsOpen, "session", status.Session)
 	return status, nil
 }
 
@@ -224,5 +229,51 @@ func (f *FinnhubService) convertFinnhubProfile(ticker string, finnhubProfile mar
 		Phone:             finnhubProfile.Phone,
 		IPODate:           ipoDate,
 		UpdatedAt:         time.Now(),
+	}
+}
+
+// convertFinnhubMarketStatus converts Finnhub market status to standard format
+func (f *FinnhubService) convertFinnhubMarketStatus(finnhubStatus market.FinnhubMarketStatusResponse) *market.MarketStatus {
+	// Calculate session end based on market session
+	var sessionEnd time.Time
+	now := time.Unix(finnhubStatus.T, 0)
+	
+	// Parse timezone and convert to location
+	loc, err := time.LoadLocation(finnhubStatus.Timezone)
+	if err != nil {
+		loc = time.UTC // fallback to UTC if timezone parsing fails
+	}
+	
+	nowInTz := now.In(loc)
+	
+	if finnhubStatus.IsOpen {
+		// If market is open, assume it closes at 4 PM in the market's timezone
+		sessionEnd = time.Date(nowInTz.Year(), nowInTz.Month(), nowInTz.Day(), 16, 0, 0, 0, loc)
+		// If current time is already past 4 PM, set to next business day
+		if nowInTz.Hour() >= 16 {
+			sessionEnd = sessionEnd.Add(24 * time.Hour)
+			for sessionEnd.Weekday() == time.Saturday || sessionEnd.Weekday() == time.Sunday {
+				sessionEnd = sessionEnd.Add(24 * time.Hour)
+			}
+		}
+	} else {
+		// If market is closed, find next opening (9:30 AM next business day)
+		sessionEnd = time.Date(nowInTz.Year(), nowInTz.Month(), nowInTz.Day(), 9, 30, 0, 0, loc)
+		if nowInTz.Hour() >= 16 || nowInTz.Weekday() == time.Saturday || nowInTz.Weekday() == time.Sunday {
+			sessionEnd = sessionEnd.Add(24 * time.Hour)
+		}
+		for sessionEnd.Weekday() == time.Saturday || sessionEnd.Weekday() == time.Sunday {
+			sessionEnd = sessionEnd.Add(24 * time.Hour)
+		}
+	}
+
+	return &market.MarketStatus{
+		Exchange:   finnhubStatus.Exchange,
+		Timezone:   finnhubStatus.Timezone,
+		IsOpen:     finnhubStatus.IsOpen,
+		Session:    finnhubStatus.Session,
+		Holiday:    finnhubStatus.Holiday,
+		SessionEnd: sessionEnd,
+		UpdatedAt:  time.Now(),
 	}
 }

@@ -9,9 +9,10 @@ import (
 	"github.com/Neph-dev/october_backend/internal/domain/news"
 )
 
-// ProcessorService handles RSS feed processing and article creation
+// ProcessorService handles RSS feed processing and web scraping for article creation
 type ProcessorService struct {
 	rssService     *RSSService
+	webScraper     *WebScraperService
 	newsService    *news.Service
 	companyService company.Service
 	logger         *slog.Logger
@@ -20,12 +21,14 @@ type ProcessorService struct {
 // NewProcessorService creates a new feed processor service
 func NewProcessorService(
 	rssService *RSSService,
+	webScraper *WebScraperService,
 	newsService *news.Service,
 	companyService company.Service,
 	logger *slog.Logger,
 ) *ProcessorService {
 	return &ProcessorService{
 		rssService:     rssService,
+		webScraper:     webScraper,
 		newsService:    newsService,
 		companyService: companyService,
 		logger:         logger,
@@ -48,14 +51,24 @@ func (s *ProcessorService) ProcessCompanyFeed(ctx context.Context, companyName s
 		return fmt.Errorf("company %s has no feed URL", companyName)
 	}
 
-	// Fetch RSS feed
-	items, err := s.rssService.FetchFeed(ctx, compResp.FeedURL)
+	// Try to fetch content - first try RSS, then fall back to web scraping
+	var items []*news.RSSFeedItem
+	
+	// First, try RSS feed
+	items, err = s.rssService.FetchFeed(ctx, compResp.FeedURL)
 	if err != nil {
-		s.logger.Error("Failed to fetch RSS feed", "error", err, "company", companyName, "url", compResp.FeedURL)
-		return fmt.Errorf("failed to fetch RSS feed for %s: %w", companyName, err)
+		s.logger.Info("RSS feed failed, trying web scraping", "error", err, "company", companyName, "url", compResp.FeedURL)
+		
+		// Fall back to web scraping
+		items, err = s.webScraper.ScrapePage(ctx, compResp.FeedURL, companyName)
+		if err != nil {
+			s.logger.Error("Both RSS and web scraping failed", "error", err, "company", companyName, "url", compResp.FeedURL)
+			return fmt.Errorf("failed to fetch content for %s: %w", companyName, err)
+		}
+		s.logger.Info("Web scraping successful", "company", companyName, "items", len(items))
+	} else {
+		s.logger.Info("RSS feed successful", "company", companyName, "items", len(items))
 	}
-
-	s.logger.Info("Fetched RSS items", "company", companyName, "items", len(items))
 
 	// Process each item
 	processed := 0

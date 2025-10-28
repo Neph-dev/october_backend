@@ -119,6 +119,21 @@ func (s *MarketService) GetAvailableTickers(ctx context.Context) (*market.Availa
 	return response, nil
 }
 
+// GetMarketStatus retrieves current market status for a given exchange from Finnhub
+func (s *MarketService) GetMarketStatus(ctx context.Context, exchange string) (*market.MarketStatus, error) {
+	s.logger.Info("Getting market status from Finnhub", "exchange", exchange)
+	
+	// Fetch market status directly from Finnhub API
+	status, err := s.finnhub.GetMarketStatus(ctx, exchange)
+	if err != nil {
+		s.logger.Error("Failed to fetch market status from Finnhub", "exchange", exchange, "error", err)
+		return nil, fmt.Errorf("%w: failed to fetch market status from Finnhub", market.ErrMarketDataService)
+	}
+	
+	s.logger.Info("Market status fetched successfully from Finnhub", "exchange", exchange, "is_open", status.IsOpen, "session", status.Session)
+	return status, nil
+}
+
 
 
 

@@ -66,6 +66,7 @@ func (r *Router) SetupRoutes() {
 	r.router.HandleFunc("/market/quote/{ticker}", r.handleMarketQuote).Methods("GET")
 	r.router.HandleFunc("/market/quotes", r.handleMarketQuotes).Methods("GET")
 	r.router.HandleFunc("/market/tickers", r.handleMarketTickers).Methods("GET")
+	r.router.HandleFunc("/market/status/{exchange}", r.handleMarketStatus).Methods("GET")
 }
 
 // ServeHTTP implements http.Handler interface with middleware chain
@@ -183,6 +184,9 @@ func (r *Router) handleMarketTickers(w http.ResponseWriter, req *http.Request) {
 	rateLimitedHandler.ServeHTTP(w, req)
 }
 
-
-
-
+// handleMarketStatus handles GET /market/status/{exchange} with rate limiting
+func (r *Router) handleMarketStatus(w http.ResponseWriter, req *http.Request) {
+	// Apply rate limiting
+	rateLimitedHandler := r.rateLimiter.Middleware()(http.HandlerFunc(r.marketHandler.GetMarketStatusHandler))
+	rateLimitedHandler.ServeHTTP(w, req)
+}

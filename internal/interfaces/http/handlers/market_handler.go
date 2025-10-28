@@ -96,9 +96,27 @@ func (h *MarketHandler) GetAvailableTickersHandler(w http.ResponseWriter, r *htt
 	h.writeJSONResponse(w, http.StatusOK, tickers)
 }
 
+// GetMarketStatusHandler handles GET /market/status/{exchange} requests
+func (h *MarketHandler) GetMarketStatusHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	exchange := strings.ToUpper(strings.TrimSpace(vars["exchange"]))
 
+	if exchange == "" {
+		h.writeErrorResponse(w, http.StatusBadRequest, "exchange is required")
+		return
+	}
 
+	h.logger.Info("Getting market status", "exchange", exchange)
 
+	status, err := h.marketService.GetMarketStatus(r.Context(), exchange)
+	if err != nil {
+		h.logger.Error("Failed to get market status", "error", err, "exchange", exchange)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "failed to get market status")
+		return
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, status)
+}
 
 // writeJSONResponse writes a JSON response
 func (h *MarketHandler) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {

@@ -122,7 +122,8 @@ func (app *Application) initialize() error {
 	app.companyService = company.NewCompanyService(companyRepo, app.logger)
 	app.newsService = news.NewService(newsRepo, app.logger.Unwrap())
 	app.rssService = feed.NewRSSService(app.logger.Unwrap())
-	app.processorService = feed.NewProcessorService(app.rssService, app.newsService, app.companyService, app.logger.Unwrap())
+	webScraperService := feed.NewWebScraperService(app.logger.Unwrap())
+	app.processorService = feed.NewProcessorService(app.rssService, webScraperService, app.newsService, app.companyService, app.logger.Unwrap())
 	
 	// Initialize Google Custom Search service
 	googleSearchService := search.NewGoogleSearchService(
