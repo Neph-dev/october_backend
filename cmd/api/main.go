@@ -24,6 +24,7 @@ import (
 	"github.com/Neph-dev/october_backend/internal/infra/search"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
+	"github.com/Neph-dev/october_backend/pkg/metrics"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -31,19 +32,21 @@ const (
 	shutdownTimeout = 30 * time.Second
 	exitSuccess     = 0
 	exitFailure     = 1
+	version         = "1.0.0"
 )
 
 type Application struct {
-	config         *config.Config
-	logger         logger.Logger
-	server         *http.Server
-	dbClient       *mongodb.Client
-	companyService company.Service
-	newsService    *news.Service
-	aiService      ai.Service
-	marketService  market.Service
-	rssService     *feed.RSSService
+	config           *config.Config
+	logger           logger.Logger
+	server           *http.Server
+	dbClient         *mongodb.Client
+	companyService   company.Service
+	newsService      *news.Service
+	aiService        ai.Service
+	marketService    market.Service
+	rssService       *feed.RSSService
 	processorService *feed.ProcessorService
+	metricsCollector *metrics.MetricsCollector
 }
 
 // main is the entry point of the application
@@ -153,8 +156,11 @@ func (app *Application) initialize() error {
 		app.logger,
 	)
 
+	// Initialize metrics collector
+	app.metricsCollector = metrics.NewMetricsCollector(app.logger)
+
 	// Create HTTP router with dependencies
-	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService, app.aiService, app.marketService)
+	router := httpHandler.NewRouter(app.logger, app.companyService, app.newsService, app.aiService, app.marketService, app.metricsCollector, version)
 	router.SetupRoutes()
 
 	// Create indexes for better performance

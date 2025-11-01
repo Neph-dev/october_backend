@@ -2,7 +2,6 @@ package http
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/Neph-dev/october_backend/internal/domain/ai"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
@@ -11,6 +10,7 @@ import (
 	"github.com/Neph-dev/october_backend/internal/interfaces/http/handlers"
 	"github.com/Neph-dev/october_backend/internal/interfaces/http/middleware"
 	"github.com/Neph-dev/october_backend/pkg/logger"
+	"github.com/Neph-dev/october_backend/pkg/metrics"
 	"github.com/gorilla/mux"
 )
 
@@ -22,10 +22,12 @@ type Router struct {
 	newsHandler    *handlers.NewsHandler
 	aiHandler      *handlers.AIHandler
 	marketHandler  *handlers.MarketHandler
+	metricsHandler *handlers.MetricsHandler
 	rateLimiter    *middleware.RateLimiter
+	collector      *metrics.MetricsCollector
 }
 
-func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service, aiService ai.Service, marketService market.Service) *Router {
+func NewRouter(logger logger.Logger, companyService company.Service, newsService *news.Service, aiService ai.Service, marketService market.Service, collector *metrics.MetricsCollector, version string) *Router {
 	// Create rate limiter: 10 requests per second, burst of 20
 	rateLimiter := middleware.NewRateLimiter(10.0, 20, logger)
 	
@@ -36,14 +38,20 @@ func NewRouter(logger logger.Logger, companyService company.Service, newsService
 		newsHandler:    handlers.NewNewsHandler(newsService, logger.Unwrap()),
 		aiHandler:      handlers.NewAIHandler(aiService, logger.Unwrap()),
 		marketHandler:  handlers.NewMarketHandler(marketService, logger.Unwrap()),
+		metricsHandler: handlers.NewMetricsHandler(collector, newsService, aiService, companyService, logger, version),
 		rateLimiter:    rateLimiter,
+		collector:      collector,
 	}
 }
 
 // SetupRoutes configures all application routes
 func (r *Router) SetupRoutes() {
-	// Health check
-	r.router.HandleFunc("/health", r.handleHealth).Methods("GET")
+	// Monitoring and health endpoints (no rate limiting for these)
+	r.router.HandleFunc("/health", r.metricsHandler.HandleHealth).Methods("GET")
+	r.router.HandleFunc("/metrics", r.metricsHandler.HandleMetrics).Methods("GET")
+	r.router.HandleFunc("/metrics.json", r.metricsHandler.HandleMetricsJSON).Methods("GET")
+	r.router.HandleFunc("/readiness", r.metricsHandler.HandleReadiness).Methods("GET")
+	r.router.HandleFunc("/liveness", r.metricsHandler.HandleLiveness).Methods("GET")
 	
 	// Company API routes with rate limiting
 	r.router.HandleFunc("/companies", r.handleGetAllCompanies).Methods("GET")
@@ -71,20 +79,17 @@ func (r *Router) SetupRoutes() {
 
 // ServeHTTP implements http.Handler interface with middleware chain
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Create middleware chain
+	// Create middleware chain with metrics collection
 	handler := middleware.Recovery(r.logger)(
-		middleware.RequestLogger(r.logger)(r.router),
+		middleware.RequestLogger(r.logger)(
+			middleware.MetricsMiddleware(r.collector)(r.router),
+		),
 	)
 	
 	handler.ServeHTTP(w, req)
 }
 
-// handleHealth handles health check requests
-func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "healthy", "timestamp": "` + time.Now().Format(time.RFC3339) + `"}`))
-}
+
 
 // handleCompanyByName handles GET /company/{name} with rate limiting
 func (r *Router) handleCompanyByName(w http.ResponseWriter, req *http.Request) {

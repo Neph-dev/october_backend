@@ -55,7 +55,7 @@ func Load() (*Config, error) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Warning: .env file not found, proceeding with existing environment variables")
-		return nil, err
+		// Don't return error - continue with environment variables
 	}
 
 	config := &Config{
@@ -119,20 +119,21 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid log level: %s", c.Logger.Level)
 	}
 
-	if c.AI.OpenAIAPIKey == "" {
-		return fmt.Errorf("OpenAI API key cannot be empty")
+	// API keys are optional for development/testing but should be logged as warnings
+	if c.AI.OpenAIAPIKey == "" || c.AI.OpenAIAPIKey == "dummy_key" {
+		log.Println("Warning: OpenAI API key not set - AI features will be limited")
 	}
 
-	if c.AI.CustomSearchAPIKey == "" {
-		return fmt.Errorf("Custom Search API key cannot be empty")
+	if c.AI.CustomSearchAPIKey == "" || c.AI.CustomSearchAPIKey == "dummy_key" {
+		log.Println("Warning: Custom Search API key not set - search features will be limited")
 	}
 
-	if c.AI.CustomSearchEngineID == "" {
-		return fmt.Errorf("Custom Search Engine ID cannot be empty")
+	if c.AI.CustomSearchEngineID == "" || c.AI.CustomSearchEngineID == "dummy_id" {
+		log.Println("Warning: Custom Search Engine ID not set - search features will be limited")
 	}
 
-	if c.Market.FinnhubAPIKey == "" {
-		return fmt.Errorf("Finnhub API key cannot be empty")
+	if c.Market.FinnhubAPIKey == "" || c.Market.FinnhubAPIKey == "dummy_key" {
+		log.Println("Warning: Finnhub API key not set - market data features will be limited")
 	}
 
 	return nil
