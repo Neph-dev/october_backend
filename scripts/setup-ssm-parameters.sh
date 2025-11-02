@@ -69,7 +69,7 @@ create_or_update_parameter() {
 echo "📋 Setting up REQUIRED parameters:"
 echo ""
 
-create_or_update_parameter "DATABASE_URI" "MongoDB connection string (e.g., mongodb+srv://user:pass@cluster.mongodb.net/october)" "true"
+create_or_update_parameter "DATABASE_URI" "MongoDB connection string (e.g., mongodb+srv://<your_user>:<your_password>@cluster.mongodb.net/<your_db>)" "true"
 
 # Optional parameters
 echo ""
