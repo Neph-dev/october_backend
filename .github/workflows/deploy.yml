@@ -43,6 +43,60 @@ jobs:
       run: |
         sed -i 's/YOUR_ACCOUNT_ID/${{ steps.account-id.outputs.account-id }}/g' ${{ env.ECS_TASK_DEFINITION }}
 
+    - name: Create ECR repository if it doesn't exist
+      run: |
+        # Check if repository exists, create if it doesn't
+        if ! aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+          echo "Creating ECR repository: ${{ env.ECR_REPOSITORY }}"
+          aws ecr create-repository \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+          
+          # Set lifecycle policy
+          cat > /tmp/lifecycle-policy.json << 'EOF'
+        {
+          "rules": [
+            {
+              "rulePriority": 1,
+              "description": "Keep last 10 tagged images",
+              "selection": {
+                "tagStatus": "tagged",
+                "countType": "imageCountMoreThan",
+                "countNumber": 10
+              },
+              "action": {
+                "type": "expire"
+              }
+            },
+            {
+              "rulePriority": 2,
+              "description": "Delete untagged images older than 1 day",
+              "selection": {
+                "tagStatus": "untagged",
+                "countType": "sinceImagePushed",
+                "countUnit": "days",
+                "countNumber": 1
+              },
+              "action": {
+                "type": "expire"
+              }
+            }
+          ]
+        }
+        EOF
+          
+          aws ecr put-lifecycle-policy \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --lifecycle-policy-text file:///tmp/lifecycle-policy.json
+          
+          echo "✅ ECR repository created successfully"
+        else
+          echo "✅ ECR repository already exists"
+        fi
+
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
       env:
