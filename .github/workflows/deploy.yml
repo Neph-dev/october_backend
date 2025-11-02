@@ -42,6 +42,12 @@ jobs:
     - name: Replace Account ID in task definition
       run: |
         sed -i 's/YOUR_ACCOUNT_ID/${{ steps.account-id.outputs.account-id }}/g' ${{ env.ECS_TASK_DEFINITION }}
+        
+        # Fix the task role ARN to use the execution role (since we don't have a separate task role)
+        sed -i 's/"taskRoleArn": "arn:aws:iam::${{ steps.account-id.outputs.account-id }}:role\/ecsTaskRole"/"taskRoleArn": "arn:aws:iam::${{ steps.account-id.outputs.account-id }}:role\/ecsTaskExecutionRole-october"/g' ${{ env.ECS_TASK_DEFINITION }}
+        
+        # Update execution role name
+        sed -i 's/ecsTaskExecutionRole"/ecsTaskExecutionRole-october"/g' ${{ env.ECS_TASK_DEFINITION }}
 
     - name: Create AWS infrastructure if it doesn't exist
       run: |
@@ -136,7 +142,18 @@ jobs:
           echo "✅ ECS cluster already exists"
         fi
         
-        # 4. Create task execution role if it doesn't exist
+        # 4. Create CloudWatch log group
+        LOG_GROUP_NAME="/ecs/october-backend"
+        if ! aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --query 'logGroups[?logGroupName==`'$LOG_GROUP_NAME'`]' --output text | grep -q "$LOG_GROUP_NAME"; then
+          echo "Creating CloudWatch log group: $LOG_GROUP_NAME"
+          aws logs create-log-group --log-group-name "$LOG_GROUP_NAME"
+          aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 30
+          echo "✅ CloudWatch log group created"
+        else
+          echo "✅ CloudWatch log group already exists"
+        fi
+        
+        # 5. Create task execution role if it doesn't exist
         TASK_EXECUTION_ROLE_NAME="ecsTaskExecutionRole-october"
         if ! aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" > /dev/null 2>&1; then
           echo "Creating ECS task execution role: $TASK_EXECUTION_ROLE_NAME"
@@ -166,7 +183,7 @@ jobs:
             --role-name "$TASK_EXECUTION_ROLE_NAME" \
             --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 
-          # Create custom policy for Systems Manager access
+          # Create custom policy for Systems Manager and CloudWatch access
           cat > /tmp/ssm-policy.json << 'EOF'
         {
             "Version": "2012-10-17",
@@ -180,6 +197,17 @@ jobs:
                     ],
                     "Resource": [
                         "arn:aws:ssm:*:*:parameter/october/*"
+                    ]
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "logs:CreateLogGroup",
+                        "logs:CreateLogStream",
+                        "logs:PutLogEvents"
+                    ],
+                    "Resource": [
+                        "arn:aws:logs:*:*:log-group:/ecs/october-backend*"
                     ]
                 }
             ]
@@ -198,6 +226,31 @@ jobs:
         else
           echo "✅ Task execution role already exists"
         fi
+        
+        # 6. Create essential Systems Manager parameters if they don't exist
+        echo "Setting up essential Systems Manager parameters..."
+        
+        # DATABASE_URI - required
+        if ! aws ssm get-parameter --name "/october/DATABASE_URI" > /dev/null 2>&1; then
+          echo "⚠️  DATABASE_URI parameter missing - creating placeholder"
+          aws ssm put-parameter \
+            --name "/october/DATABASE_URI" \
+            --value "mongodb://placeholder-update-this-value" \
+            --type "SecureString" \
+            --description "MongoDB connection string for October Backend (UPDATE THIS VALUE)"
+        fi
+        
+        # Optional parameters - create placeholders if they don't exist
+        for param in "OPENAI_API_KEY" "CUSTOM_SEARCH_API_KEY" "CUSTOM_SEARCH_ENGINE_ID" "FINNHUB_API_KEY"; do
+          if ! aws ssm get-parameter --name "/october/$param" > /dev/null 2>&1; then
+            echo "Creating placeholder for optional parameter: $param"
+            aws ssm put-parameter \
+              --name "/october/$param" \
+              --value "placeholder-update-if-needed" \
+              --type "SecureString" \
+              --description "Optional parameter for October Backend" || echo "Parameter might already exist"
+          fi
+        done
 
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
@@ -224,6 +277,10 @@ jobs:
       run: |
         echo "📋 Registering ECS task definition..."
         
+        # Display task definition for debugging
+        echo "🔍 Task definition contents:"
+        cat ${{ steps.task-def.outputs.task-definition }} | jq .
+        
         # Register the task definition
         TASK_DEF_ARN=$(aws ecs register-task-definition \
           --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
@@ -232,6 +289,43 @@ jobs:
         
         echo "✅ Task definition registered: $TASK_DEF_ARN"
         
+        # Get default VPC and subnets (needed for both create and update)
+        VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)
+        SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text | tr '\t' ',')
+        
+        echo "🌐 Using VPC: $VPC_ID"
+        echo "🌐 Using subnets: $SUBNET_IDS"
+        
+        # Create security group if it doesn't exist
+        SG_NAME="october-backend-sg"
+        if ! aws ec2 describe-security-groups --group-names "$SG_NAME" > /dev/null 2>&1; then
+          echo "🔒 Creating security group..."
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "$SG_NAME" \
+            --description "Security group for October Backend" \
+            --vpc-id "$VPC_ID" \
+            --query 'GroupId' \
+            --output text)
+          
+          # Allow inbound traffic on port 8080
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 8080 \
+            --cidr 0.0.0.0/0
+          
+          # Allow all outbound traffic (needed for database connections, etc.)
+          aws ec2 authorize-security-group-egress \
+            --group-id "$SG_ID" \
+            --protocol -1 \
+            --cidr 0.0.0.0/0 || echo "Egress rule might already exist"
+          
+          echo "✅ Security group created: $SG_ID"
+        else
+          SG_ID=$(aws ec2 describe-security-groups --group-names "$SG_NAME" --query 'SecurityGroups[0].GroupId' --output text)
+          echo "✅ Using existing security group: $SG_ID"
+        fi
+        
         # Check if service exists
         if aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
           echo "📦 Updating existing ECS service..."
@@ -239,37 +333,10 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --service ${{ env.ECS_SERVICE }} \
             --task-definition "$TASK_DEF_ARN" \
-            --desired-count 1
+            --desired-count 1 \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}"
         else
           echo "🆕 Creating new ECS service..."
-          
-          # Get default VPC and subnets
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)
-          SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text | tr '\t' ',')
-          
-          # Create security group if it doesn't exist
-          SG_NAME="october-backend-sg"
-          if ! aws ec2 describe-security-groups --group-names "$SG_NAME" > /dev/null 2>&1; then
-            echo "🔒 Creating security group..."
-            SG_ID=$(aws ec2 create-security-group \
-              --group-name "$SG_NAME" \
-              --description "Security group for October Backend" \
-              --vpc-id "$VPC_ID" \
-              --query 'GroupId' \
-              --output text)
-            
-            # Allow inbound traffic on port 8080
-            aws ec2 authorize-security-group-ingress \
-              --group-id "$SG_ID" \
-              --protocol tcp \
-              --port 8080 \
-              --cidr 0.0.0.0/0
-            
-            echo "✅ Security group created: $SG_ID"
-          else
-            SG_ID=$(aws ec2 describe-security-groups --group-names "$SG_NAME" --query 'SecurityGroups[0].GroupId' --output text)
-            echo "✅ Using existing security group: $SG_ID"
-          fi
           
           # Create the service
           aws ecs create-service \
@@ -282,9 +349,33 @@ jobs:
             --enable-execute-command
         fi
         
-        echo "⏳ Waiting for service to stabilize..."
-        aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}
-        echo "✅ Service deployment completed successfully"
+        echo "⏳ Waiting for service to stabilize (timeout: 10 minutes)..."
+        
+        # Wait with timeout and better error handling
+        if timeout 600 aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}; then
+          echo "✅ Service deployment completed successfully"
+        else
+          echo "❌ Service deployment timed out or failed"
+          
+          # Get service details for debugging
+          echo "🔍 Service details:"
+          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}
+          
+          # Get task details
+          echo "🔍 Task details:"
+          TASK_ARNS=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query 'taskArns' --output text)
+          if [ ! -z "$TASK_ARNS" ] && [ "$TASK_ARNS" != "None" ]; then
+            aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARNS
+          else
+            echo "No tasks found for service"
+          fi
+          
+          # Get recent service events
+          echo "🔍 Recent service events:"
+          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].events[:10]'
+          
+          exit 1
+        fi
 
     - name: Post-deployment health check
       run: |
