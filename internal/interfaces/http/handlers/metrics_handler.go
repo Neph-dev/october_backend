@@ -23,7 +23,6 @@ type MetricsHandler struct {
 	version        string
 }
 
-// NewMetricsHandler creates a new metrics handler
 func NewMetricsHandler(
 	collector *metrics.MetricsCollector,
 	newsService *news.Service,

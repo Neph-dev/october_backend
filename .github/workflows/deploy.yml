@@ -33,6 +33,16 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
+    - name: Get AWS Account ID
+      id: account-id
+      run: |
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        echo "account-id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+    - name: Replace Account ID in task definition
+      run: |
+        sed -i 's/YOUR_ACCOUNT_ID/${{ steps.account-id.outputs.account-id }}/g' ${{ env.ECS_TASK_DEFINITION }}
+
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
       env:

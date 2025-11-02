@@ -1,0 +1,71 @@
+version: "3.8"
+
+services:
+  october-backend:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_HOST=${SERVER_HOST:-0.0.0.0}
+      - SERVER_PORT=${SERVER_PORT:-8080}
+      - SERVER_READ_TIMEOUT=${SERVER_READ_TIMEOUT:-15s}
+      - SERVER_WRITE_TIMEOUT=${SERVER_WRITE_TIMEOUT:-15s}
+      - SERVER_IDLE_TIMEOUT=${SERVER_IDLE_TIMEOUT:-60s}
+      - DATABASE_URI=mongodb://mongodb:27017/october
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CUSTOM_SEARCH_API_KEY=${CUSTOM_SEARCH_API_KEY}
+      - CUSTOM_SEARCH_ENGINE_ID=${CUSTOM_SEARCH_ENGINE_ID}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    env_file:
+      - .env
+    # Remove dependency on local MongoDB when using remote cluster
+    # depends_on:
+    #   - mongodb
+    networks:
+      - october-network
+    restart: unless-stopped
+
+  # MongoDB - Only for local development
+  # For production, use remote MongoDB cluster (Atlas/DocumentDB)
+  mongodb:
+    image: mongo:7-jammy
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=october
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - october-network
+    restart: unless-stopped
+    profiles:
+      - local-db
+
+  # MongoDB Express - Only for local development
+  mongo-express:
+    image: mongo-express:latest
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=pass
+    depends_on:
+      - mongodb
+    networks:
+      - october-network
+    restart: unless-stopped
+    profiles:
+      - local-db
+
+volumes:
+  mongodb_data:
+
+networks:
+  october-network:
+    driver: bridge
