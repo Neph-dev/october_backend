@@ -44,9 +44,10 @@ else
     "rules": [
         {
             "rulePriority": 1,
-            "description": "Keep last 10 tagged images",
+            "description": "Keep last 10 tagged images with version prefixes",
             "selection": {
                 "tagStatus": "tagged",
+                "tagPrefixList": ["v", "latest"],
                 "countType": "imageCountMoreThan",
                 "countNumber": 10
             },
@@ -56,6 +57,18 @@ else
         },
         {
             "rulePriority": 2,
+            "description": "Keep last 5 commit-hash tagged images",
+            "selection": {
+                "tagStatus": "tagged",
+                "countType": "imageCountMoreThan",
+                "countNumber": 5
+            },
+            "action": {
+                "type": "expire"
+            }
+        },
+        {
+            "rulePriority": 3,
             "description": "Delete untagged images older than 1 day",
             "selection": {
                 "tagStatus": "untagged",
