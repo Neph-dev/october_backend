@@ -43,9 +43,11 @@ jobs:
       run: |
         sed -i 's/YOUR_ACCOUNT_ID/${{ steps.account-id.outputs.account-id }}/g' ${{ env.ECS_TASK_DEFINITION }}
 
-    - name: Create ECR repository if it doesn't exist
+    - name: Create AWS infrastructure if it doesn't exist
       run: |
-        # Check if repository exists, create if it doesn't
+        echo "🚀 Setting up AWS infrastructure..."
+        
+        # 1. Create ECR repository if it doesn't exist
         if ! aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
           echo "Creating ECR repository: ${{ env.ECR_REPOSITORY }}"
           aws ecr create-repository \
@@ -109,6 +111,82 @@ jobs:
         else
           echo "✅ ECR repository already exists"
         fi
+        
+        # 2. Create ECS cluster if it doesn't exist
+        if ! aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+          echo "Creating ECS cluster: ${{ env.ECS_CLUSTER }}"
+          aws ecs create-cluster \
+            --cluster-name ${{ env.ECS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }} \
+            --capacity-providers FARGATE \
+            --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1
+          echo "✅ ECS cluster created successfully"
+        else
+          echo "✅ ECS cluster already exists"
+        fi
+        
+        # 3. Create task execution role if it doesn't exist
+        TASK_EXECUTION_ROLE_NAME="ecsTaskExecutionRole-october"
+        if ! aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" > /dev/null 2>&1; then
+          echo "Creating ECS task execution role: $TASK_EXECUTION_ROLE_NAME"
+          
+          # Create assume role policy
+          cat > /tmp/assume-role-policy.json << 'EOF'
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+        EOF
+
+          aws iam create-role \
+            --role-name "$TASK_EXECUTION_ROLE_NAME" \
+            --assume-role-policy-document file:///tmp/assume-role-policy.json
+
+          # Attach AWS managed policy
+          aws iam attach-role-policy \
+            --role-name "$TASK_EXECUTION_ROLE_NAME" \
+            --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+
+          # Create custom policy for Systems Manager access
+          cat > /tmp/ssm-policy.json << 'EOF'
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "ssm:GetParameter",
+                        "ssm:GetParameters",
+                        "ssm:GetParametersByPath"
+                    ],
+                    "Resource": [
+                        "arn:aws:ssm:*:*:parameter/october/*"
+                    ]
+                }
+            ]
+        }
+        EOF
+
+          aws iam put-role-policy \
+            --role-name "$TASK_EXECUTION_ROLE_NAME" \
+            --policy-name "SSMParameterAccess" \
+            --policy-document file:///tmp/ssm-policy.json
+
+          # Clean up temporary files
+          rm /tmp/assume-role-policy.json /tmp/ssm-policy.json
+          
+          echo "✅ Task execution role created successfully"
+        else
+          echo "✅ Task execution role already exists"
+        fi
 
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
@@ -131,13 +209,71 @@ jobs:
         container-name: october-backend
         image: ${{ steps.build-image.outputs.image }}
 
-    - name: Deploy Amazon ECS task definition
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: true
+    - name: Register task definition and create/update service
+      run: |
+        echo "📋 Registering ECS task definition..."
+        
+        # Register the task definition
+        TASK_DEF_ARN=$(aws ecs register-task-definition \
+          --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text)
+        
+        echo "✅ Task definition registered: $TASK_DEF_ARN"
+        
+        # Check if service exists
+        if aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+          echo "📦 Updating existing ECS service..."
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition "$TASK_DEF_ARN" \
+            --desired-count 1
+        else
+          echo "🆕 Creating new ECS service..."
+          
+          # Get default VPC and subnets
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)
+          SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text | tr '\t' ',')
+          
+          # Create security group if it doesn't exist
+          SG_NAME="october-backend-sg"
+          if ! aws ec2 describe-security-groups --group-names "$SG_NAME" > /dev/null 2>&1; then
+            echo "🔒 Creating security group..."
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name "$SG_NAME" \
+              --description "Security group for October Backend" \
+              --vpc-id "$VPC_ID" \
+              --query 'GroupId' \
+              --output text)
+            
+            # Allow inbound traffic on port 8080
+            aws ec2 authorize-security-group-ingress \
+              --group-id "$SG_ID" \
+              --protocol tcp \
+              --port 8080 \
+              --cidr 0.0.0.0/0
+            
+            echo "✅ Security group created: $SG_ID"
+          else
+            SG_ID=$(aws ec2 describe-security-groups --group-names "$SG_NAME" --query 'SecurityGroups[0].GroupId' --output text)
+            echo "✅ Using existing security group: $SG_ID"
+          fi
+          
+          # Create the service
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --task-definition "$TASK_DEF_ARN" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+            --enable-execute-command
+        fi
+        
+        echo "⏳ Waiting for service to stabilize..."
+        aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}
+        echo "✅ Service deployment completed successfully"
 
     - name: Post-deployment health check
       run: |
