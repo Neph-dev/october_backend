@@ -354,7 +354,23 @@ jobs:
         
         # Check if service exists and is active
         echo "🔍 Checking ECS service status..."
-        SERVICE_STATUS=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+        SERVICE_RESPONSE=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
+        
+        # Parse the response to determine service status
+        if [ "$SERVICE_RESPONSE" = "ERROR" ]; then
+          SERVICE_STATUS="NOT_FOUND"
+          echo "❌ Service not found or cluster not accessible"
+        else
+          # Check if services array is empty (service doesn't exist)
+          SERVICE_COUNT=$(echo "$SERVICE_RESPONSE" | jq -r '.services | length')
+          if [ "$SERVICE_COUNT" = "0" ]; then
+            SERVICE_STATUS="NOT_FOUND"
+            echo "❌ Service does not exist in cluster"
+          else
+            SERVICE_STATUS=$(echo "$SERVICE_RESPONSE" | jq -r '.services[0].status')
+            echo "📋 Service status: $SERVICE_STATUS"
+          fi
+        fi
         
         if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
           echo "📦 Updating existing ECS service..."
@@ -365,17 +381,28 @@ jobs:
             --desired-count 1 \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}"
             
-        elif [ "$SERVICE_STATUS" = "INACTIVE" ]; then
-          echo "⚠️  Service is inactive, deleting and recreating..."
-          aws ecs delete-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force || echo "Failed to delete inactive service"
-          sleep 30  # Wait for service to be fully deleted
+        elif [ "$SERVICE_STATUS" = "INACTIVE" ] || [ "$SERVICE_STATUS" = "DRAINING" ]; then
+          echo "⚠️  Service is $SERVICE_STATUS, deleting and recreating..."
+          aws ecs delete-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force || echo "Failed to delete service"
+          
+          # Wait for service to be fully deleted
+          echo "⏳ Waiting for service deletion..."
+          for i in {1..12}; do
+            sleep 10
+            SERVICE_CHECK=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
+            if [ "$SERVICE_CHECK" = "ERROR" ] || [ "$(echo "$SERVICE_CHECK" | jq -r '.services | length')" = "0" ]; then
+              echo "✅ Service deleted successfully"
+              break
+            fi
+            echo "⏳ Still waiting for service deletion (attempt $i/12)..."
+          done
           SERVICE_STATUS="NOT_FOUND"
         fi
         
         if [ "$SERVICE_STATUS" = "NOT_FOUND" ] || [ "$SERVICE_STATUS" = "null" ]; then
           echo "🆕 Creating new ECS service..."
           
-          # Create the service with health check grace period
+          # Create the service (note: health-check-grace-period-seconds is only for ALB/NLB target groups)
           aws ecs create-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service-name ${{ env.ECS_SERVICE }} \
@@ -383,34 +410,59 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
-            --health-check-grace-period-seconds 300 \
-            --enable-execute-command
+            --enable-execute-command \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=50"
+            
+          echo "✅ Service creation initiated"
         fi
         
-        echo "⏳ Waiting for service to stabilize (timeout: 10 minutes)..."
+        # Wait for service to be created and become stable
+        echo "⏳ Waiting for service to stabilize (timeout: 15 minutes)..."
         
-        # Wait with timeout and better error handling
-        if timeout 600 aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}; then
+        # First, wait for service to exist
+        echo "🔍 Waiting for service to be created..."
+        for i in {1..30}; do
+          SERVICE_CHECK=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
+          if [ "$SERVICE_CHECK" != "ERROR" ]; then
+            SERVICE_COUNT=$(echo "$SERVICE_CHECK" | jq -r '.services | length')
+            if [ "$SERVICE_COUNT" != "0" ]; then
+              echo "✅ Service exists, proceeding to stability check"
+              break
+            fi
+          fi
+          echo "⏳ Service not yet created (attempt $i/30)..."
+          sleep 10
+        done
+        
+        # Now wait for service to become stable
+        if timeout 900 aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}; then
           echo "✅ Service deployment completed successfully"
         else
           echo "❌ Service deployment timed out or failed"
           
           # Get service details for debugging
           echo "🔍 Service details:"
-          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}
+          SERVICE_DEBUG=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo '{"services":[],"failures":[{"reason":"SERVICE_NOT_FOUND"}]}')
+          echo "$SERVICE_DEBUG" | jq .
           
-          # Get task details
-          echo "🔍 Task details:"
-          TASK_ARNS=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query 'taskArns' --output text)
-          if [ ! -z "$TASK_ARNS" ] && [ "$TASK_ARNS" != "None" ]; then
-            aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARNS
+          # Check if service exists before trying to get tasks
+          SERVICE_EXISTS=$(echo "$SERVICE_DEBUG" | jq -r '.services | length')
+          if [ "$SERVICE_EXISTS" != "0" ]; then
+            # Get task details
+            echo "🔍 Task details:"
+            TASK_ARNS=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query 'taskArns' --output text 2>/dev/null || echo "None")
+            if [ ! -z "$TASK_ARNS" ] && [ "$TASK_ARNS" != "None" ]; then
+              aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARNS | jq .
+            else
+              echo "No tasks found for service"
+            fi
+            
+            # Get recent service events
+            echo "🔍 Recent service events:"
+            echo "$SERVICE_DEBUG" | jq -r '.services[0].events[:10][] | "\(.createdAt) - \(.message)"' 2>/dev/null || echo "No events available"
           else
-            echo "No tasks found for service"
+            echo "❌ Service was not created successfully"
           fi
-          
-          # Get recent service events
-          echo "🔍 Recent service events:"
-          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].events[:10]'
           
           exit 1
         fi
