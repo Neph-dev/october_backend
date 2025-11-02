@@ -129,17 +129,43 @@ jobs:
           echo "✅ ECS service-linked role already exists"
         fi
         
-        # 3. Create ECS cluster if it doesn't exist
-        if ! aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-          echo "Creating ECS cluster: ${{ env.ECS_CLUSTER }}"
+        # 3. Create ECS cluster if it doesn't exist or is inactive
+        echo "🔍 Checking ECS cluster status..."
+        CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+          echo "✅ ECS cluster is active: ${{ env.ECS_CLUSTER }}"
+        elif [ "$CLUSTER_STATUS" = "INACTIVE" ]; then
+          echo "⚠️  ECS cluster is inactive, deleting and recreating..."
+          aws ecs delete-cluster --cluster ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} || echo "Failed to delete inactive cluster"
+          sleep 10
+          CLUSTER_STATUS="NOT_FOUND"
+        fi
+        
+        if [ "$CLUSTER_STATUS" = "NOT_FOUND" ] || [ "$CLUSTER_STATUS" = "null" ]; then
+          echo "🆕 Creating ECS cluster: ${{ env.ECS_CLUSTER }}"
           aws ecs create-cluster \
             --cluster-name ${{ env.ECS_CLUSTER }} \
             --region ${{ env.AWS_REGION }} \
             --capacity-providers FARGATE \
             --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1
-          echo "✅ ECS cluster created successfully"
-        else
-          echo "✅ ECS cluster already exists"
+          
+          # Wait for cluster to be active
+          echo "⏳ Waiting for cluster to become active..."
+          for i in {1..30}; do
+            CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null || echo "CHECKING")
+            if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+              echo "✅ ECS cluster is now active"
+              break
+            fi
+            echo "⏳ Cluster status: $CLUSTER_STATUS (attempt $i/30)"
+            sleep 10
+          done
+          
+          if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
+            echo "❌ Cluster failed to become active after 5 minutes"
+            exit 1
+          fi
         fi
         
         # 4. Create CloudWatch log group
@@ -326,8 +352,11 @@ jobs:
           echo "✅ Using existing security group: $SG_ID"
         fi
         
-        # Check if service exists
-        if aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+        # Check if service exists and is active
+        echo "🔍 Checking ECS service status..."
+        SERVICE_STATUS=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query 'services[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
           echo "📦 Updating existing ECS service..."
           aws ecs update-service \
             --cluster ${{ env.ECS_CLUSTER }} \
@@ -335,10 +364,18 @@ jobs:
             --task-definition "$TASK_DEF_ARN" \
             --desired-count 1 \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}"
-        else
+            
+        elif [ "$SERVICE_STATUS" = "INACTIVE" ]; then
+          echo "⚠️  Service is inactive, deleting and recreating..."
+          aws ecs delete-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force || echo "Failed to delete inactive service"
+          sleep 30  # Wait for service to be fully deleted
+          SERVICE_STATUS="NOT_FOUND"
+        fi
+        
+        if [ "$SERVICE_STATUS" = "NOT_FOUND" ] || [ "$SERVICE_STATUS" = "null" ]; then
           echo "🆕 Creating new ECS service..."
           
-          # Create the service
+          # Create the service with health check grace period
           aws ecs create-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service-name ${{ env.ECS_SERVICE }} \
@@ -346,6 +383,7 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+            --health-check-grace-period-seconds 300 \
             --enable-execute-command
         fi
         
@@ -392,16 +430,24 @@ jobs:
             echo "Service endpoint: http://$PUBLIC_IP:8080"
             echo "Testing health endpoint..."
             
-            # Retry health check up to 5 times
+            # Retry liveness check up to 5 times (using liveness endpoint for consistency with ECS health check)
+            echo "🏥 Testing liveness endpoint (same as ECS health check)..."
             for i in {1..5}; do
-              if curl -f -s "http://$PUBLIC_IP:8080/health"; then
-                echo "✅ Health check passed"
+              if curl -f -s "http://$PUBLIC_IP:8080/liveness" >/dev/null 2>&1; then
+                echo "✅ Liveness check passed"
+                echo "Response:"
+                curl -s "http://$PUBLIC_IP:8080/liveness" | jq . || echo "Raw response:"
+                curl -s "http://$PUBLIC_IP:8080/liveness"
                 break
               else
-                echo "⏳ Health check attempt $i failed, retrying in 10 seconds..."
+                echo "⏳ Liveness check attempt $i failed, retrying in 10 seconds..."
                 sleep 10
               fi
             done
+            
+            # Also test health endpoint for comparison
+            echo "🔍 Testing full health endpoint for debugging:"
+            curl -s "http://$PUBLIC_IP:8080/health" | jq . || echo "Health endpoint not responding or not JSON"
           fi
         fi
 
