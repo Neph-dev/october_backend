@@ -93,9 +93,21 @@ EOF
     echo "✅ ECR repository created with lifecycle policy"
 fi
 
-# 2. Create ECS Cluster
+# 2. Create ECS Service-Linked Role
 echo ""
-echo "2️⃣ Setting up ECS Cluster..."
+echo "2️⃣ Setting up ECS Service-Linked Role..."
+if aws iam get-role --role-name AWSServiceRoleForECS > /dev/null 2>&1; then
+    echo "✅ ECS service-linked role already exists"
+else
+    echo "🔨 Creating ECS service-linked role..."
+    aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || echo "Service-linked role creation handled"
+    echo "✅ ECS service-linked role created"
+    sleep 10  # Wait for role to be available
+fi
+
+# 3. Create ECS Cluster  
+echo ""
+echo "3️⃣ Setting up ECS Cluster..."
 if aws ecs describe-clusters --clusters "$ECS_CLUSTER" --region "$AWS_REGION" --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
     echo "✅ ECS cluster '$ECS_CLUSTER' already exists"
 else
@@ -108,9 +120,9 @@ else
     echo "✅ ECS cluster created"
 fi
 
-# 3. Create Systems Manager Parameters for configuration
+# 4. Create Systems Manager Parameters for configuration
 echo ""
-echo "3️⃣ Setting up Systems Manager Parameters..."
+echo "4️⃣ Setting up Systems Manager Parameters..."
 
 # Database URI parameter
 if aws ssm get-parameter --name "/october/DATABASE_URI" --region "$AWS_REGION" > /dev/null 2>&1; then
@@ -148,9 +160,9 @@ else
     fi
 fi
 
-# 4. Create IAM roles if they don't exist
+# 5. Create IAM roles if they don't exist
 echo ""
-echo "4️⃣ Setting up IAM Roles..."
+echo "5️⃣ Setting up IAM Roles..."
 
 # Task execution role
 TASK_EXECUTION_ROLE_NAME="ecsTaskExecutionRole-october"

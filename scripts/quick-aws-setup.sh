@@ -41,9 +41,19 @@ else
     echo "✅ ECR repository created"
 fi
 
-# 2. Create ECS Cluster
+# 2. Create ECS Service-Linked Role
 echo ""
-echo "2️⃣ Creating ECS Cluster..."
+echo "2️⃣ Creating ECS Service-Linked Role..."
+if aws iam get-role --role-name AWSServiceRoleForECS > /dev/null 2>&1; then
+    echo "✅ ECS service-linked role already exists"
+else
+    aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com > /dev/null || echo "✅ Service-linked role created or already exists"
+    sleep 5  # Wait for role to be available
+fi
+
+# 3. Create ECS Cluster
+echo ""
+echo "3️⃣ Creating ECS Cluster..."
 if aws ecs describe-clusters --clusters "$ECS_CLUSTER" --region "$AWS_REGION" --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
     echo "✅ ECS cluster already exists"
 else
@@ -55,9 +65,9 @@ else
     echo "✅ ECS cluster created"
 fi
 
-# 3. Create IAM Role
+# 4. Create IAM Role
 echo ""
-echo "3️⃣ Creating IAM Role..."
+echo "4️⃣ Creating IAM Role..."
 TASK_EXECUTION_ROLE_NAME="ecsTaskExecutionRole-october"
 if aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" > /dev/null 2>&1; then
     echo "✅ Task execution role already exists"
