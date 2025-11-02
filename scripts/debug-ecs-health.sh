@@ -9,7 +9,7 @@ echo "===================================="
 
 # Configuration
 CLUSTER_NAME="october-cluster"
-SERVICE_NAME="october-service"
+SERVICE_NAME="october-backend-service"
 REGION=${AWS_DEFAULT_REGION:-us-east-1}
 
 # Check if AWS CLI is configured
