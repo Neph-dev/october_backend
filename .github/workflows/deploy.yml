@@ -203,7 +203,7 @@ jobs:
           ALB_ARN=$(aws elbv2 describe-load-balancers \
             --names october-alb \
             --query 'LoadBalancers[0].LoadBalancerArn' \
-            --output text 2>/dev/null)
+            --output text 2>/dev/null || true)
 
           if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
             ALB_ARN=$(aws elbv2 create-load-balancer \
@@ -227,7 +227,7 @@ jobs:
           TG_ARN=$(aws elbv2 describe-target-groups \
             --names october-backend-tg \
             --query 'TargetGroups[0].TargetGroupArn' \
-            --output text 2>/dev/null)
+            --output text 2>/dev/null || true)
 
           if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
             TG_ARN=$(aws elbv2 create-target-group \
