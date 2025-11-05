@@ -121,41 +121,91 @@ jobs:
           VPC_ID: ${{ steps.network.outputs.vpc-id }}
           SUBNET_IDS: ${{ steps.network.outputs.subnet-ids }}
         run: |
-          # Create ALB SG (open 80/443)
-          ALB_SG=$(aws ec2 create-security-group \
-            --group-name october-alb-sg \
-            --description "ALB SG" \
-            --vpc-id $VPC_ID \
-            --query 'GroupId' --output text 2>/dev/null || \
-            aws ec2 describe-security-groups --filters Name=group-name,Values=october-alb-sg --query 'SecurityGroups[0].GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0 || true
-          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0 || true
+          # Create/reuse ALB security group (open 80/443)
+          ALB_SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=october-alb-sg" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null)
 
-          # Create Task SG (allow ALB only)
-          TASK_SG=$(aws ec2 create-security-group \
-            --group-name october-tasks-sg \
-            --description "Tasks SG" \
-            --vpc-id $VPC_ID \
-            --query 'GroupId' --output text 2>/dev/null || \
-            aws ec2 describe-security-groups --filters Name=group-name,Values=october-tasks-sg --query 'SecurityGroups[0].GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG || true
-          aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 || true
+          if [ -z "$ALB_SG" ] || [ "$ALB_SG" = "None" ]; then
+            ALB_SG=$(aws ec2 create-security-group \
+              --group-name october-alb-sg \
+              --description "ALB SG" \
+              --vpc-id $VPC_ID \
+              --query 'GroupId' --output text)
+            echo "Created ALB security group: $ALB_SG"
+          else
+            echo "Reusing ALB security group: $ALB_SG"
+          fi
 
-          # Create ALB
+          # Ensure ALB ingress rules exist
+          if ! aws ec2 describe-security-groups --group-ids $ALB_SG \
+            --query "SecurityGroups[0].IpPermissions[?FromPort==\`80\` && ToPort==\`80\` && IpProtocol=='tcp'].IpRanges[?CidrIp=='0.0.0.0/0']" \
+            --output text | grep -q '0.0.0.0/0'; then
+            aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0
+          else
+            echo "ALB ingress rule for port 80 already present"
+          fi
+
+          if ! aws ec2 describe-security-groups --group-ids $ALB_SG \
+            --query "SecurityGroups[0].IpPermissions[?FromPort==\`443\` && ToPort==\`443\` && IpProtocol=='tcp'].IpRanges[?CidrIp=='0.0.0.0/0']" \
+            --output text | grep -q '0.0.0.0/0'; then
+            aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0
+          else
+            echo "ALB ingress rule for port 443 already present"
+          fi
+
+          # Create/reuse task security group (allow traffic from ALB)
+          TASK_SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=october-tasks-sg" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null)
+
+          if [ -z "$TASK_SG" ] || [ "$TASK_SG" = "None" ]; then
+            TASK_SG=$(aws ec2 create-security-group \
+              --group-name october-tasks-sg \
+              --description "Tasks SG" \
+              --vpc-id $VPC_ID \
+              --query 'GroupId' --output text)
+            echo "Created task security group: $TASK_SG"
+          else
+            echo "Reusing task security group: $TASK_SG"
+          fi
+
+          if ! aws ec2 describe-security-groups --group-ids $TASK_SG \
+            --query "SecurityGroups[0].IpPermissions[?FromPort==\`8080\` && ToPort==\`8080\` && IpProtocol=='tcp'].UserIdGroupPairs[?GroupId=='$ALB_SG']" \
+            --output text | grep -q $ALB_SG; then
+            aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG
+          else
+            echo "Task security group already allows traffic from ALB"
+          fi
+
+          if ! aws ec2 describe-security-groups --group-ids $TASK_SG \
+            --query "SecurityGroups[0].IpPermissionsEgress[?IpProtocol=='-1'].IpRanges[?CidrIp=='0.0.0.0/0']" \
+            --output text | grep -q '0.0.0.0/0'; then
+            aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0
+          else
+            echo "Task security group egress already open"
+          fi
+
+          # Create or reuse ALB
           SUBNET_ARG=$(echo "$SUBNET_IDS" | sed 's/,/ /g')
-          ALB_ARN=$(aws elbv2 create-load-balancer \
-            --name october-alb \
-            --subnets $SUBNET_ARG \
-            --security-groups $ALB_SG \
-            --scheme internet-facing \
-            --type application \
-            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || \
-            aws elbv2 describe-load-balancers --names october-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          ALB_ARN=$(aws elbv2 describe-load-balancers \
+            --names october-alb \
+            --query 'LoadBalancers[0].LoadBalancerArn' \
+            --output text 2>/dev/null)
 
-          # Ensure the load balancer exists and is active before proceeding
-          if [ "$ALB_ARN" = "None" ] || [ -z "$ALB_ARN" ]; then
-            echo "Failed to create or locate the application load balancer"
-            exit 1
+          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
+            ALB_ARN=$(aws elbv2 create-load-balancer \
+              --name october-alb \
+              --subnets $SUBNET_ARG \
+              --security-groups $ALB_SG \
+              --scheme internet-facing \
+              --type application \
+              --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+            echo "Created load balancer: $ALB_ARN"
+          else
+            echo "Reusing existing load balancer: $ALB_ARN"
           fi
 
           echo "Waiting for load balancer to become active..."
@@ -163,19 +213,28 @@ jobs:
 
           ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text)
 
-          # Create Target Group
-          TG_ARN=$(aws elbv2 create-target-group \
-            --name october-backend-tg \
-            --protocol HTTP \
-            --port 8080 \
-            --vpc-id $VPC_ID \
-            --target-type ip \
-            --health-check-path "/health" \
-            --health-check-protocol HTTP \
-            --health-check-interval-seconds 15 \
-            --matcher HttpCode=200 \
-            --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || \
-            aws elbv2 describe-target-groups --names october-backend-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
+          # Create or reuse Target Group
+          TG_ARN=$(aws elbv2 describe-target-groups \
+            --names october-backend-tg \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text 2>/dev/null)
+
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            TG_ARN=$(aws elbv2 create-target-group \
+              --name october-backend-tg \
+              --protocol HTTP \
+              --port 8080 \
+              --vpc-id $VPC_ID \
+              --target-type ip \
+              --health-check-path "/health" \
+              --health-check-protocol HTTP \
+              --health-check-interval-seconds 15 \
+              --matcher HttpCode=200 \
+              --query 'TargetGroups[0].TargetGroupArn' --output text)
+            echo "Created target group: $TG_ARN"
+          else
+            echo "Reusing target group: $TG_ARN"
+          fi
 
           # Create Listener
           aws elbv2 create-listener \
