@@ -4,14 +4,18 @@ on:
   push:
     branches: [ main ]
 
+# permissions:
+#   id-token: write
+#   contents: read
+
 env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: october-backend
   ECS_CLUSTER: october-cluster
   ECS_SERVICE: october-backend-service
   ECS_TASK_DEFINITION: aws/ecs-task-definition.json     
-  VPC_ID: $(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)                            
-  SUBNET_IDS: $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[*].SubnetId' --output text | tr ' ' ',')
+  VPC_ID: ${{ steps.network.outputs.vpc-id }}
+  SUBNET_IDS: ${{ steps.network.outputs.subnet-ids }}
 
 jobs:
   deploy:
@@ -24,7 +28,8 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/github-deploy-role
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Get AWS Account ID
         id: account-id
@@ -93,8 +98,33 @@ jobs:
           echo "task-def-arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
           echo "Registered task definition: $TASK_DEF_ARN"
 
+      - name: Get VPC and Subnet IDs
+        id: network
+        run: |
+          echo "Fetching default VPC and public subnets..."
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=is-default,Values=true" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)
+
+          # Get only subnets where map-public-ip-on-launch=true (public subnets)
+          SUBNET_IDS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
+            --query 'Subnets[*].SubnetId' \
+            --output text | tr ' ' ',')
+
+          echo "vpc-id=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "subnet-ids=$SUBNET_IDS" >> $GITHUB_OUTPUT
+
+          echo "VPC: $VPC_ID"
+          echo "Subnets: $SUBNET_IDS"
+
+
       - name: Setup networking and load balancer
         id: alb
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc-id }}
+          SUBNET_IDS: ${{ steps.network.outputs.subnet-ids }}
         run: |
           # Create ALB SG (open 80/443)
           ALB_SG=$(aws ec2 create-security-group \
@@ -160,6 +190,8 @@ jobs:
           TASK_DEF_ARN: ${{ steps.register.outputs.task-def-arn }}
           TG_ARN: ${{ steps.alb.outputs.tg-arn }}
           TASK_SG: ${{ steps.alb.outputs.task-sg }}
+          VPC_ID: ${{ steps.network.outputs.vpc-id }}
+          SUBNET_IDS: ${{ steps.network.outputs.subnet-ids }}
         run: |
           CLUSTER=${ECS_CLUSTER}
           SERVICE=${ECS_SERVICE}
