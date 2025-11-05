@@ -139,8 +139,8 @@ jobs:
           fi
 
           # Ensure ALB ingress rules exist (check if rule exists before adding)
-          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 80 already present" || echo "Added ALB ingress rule for port 80"
-          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 443 already present" || echo "Added ALB ingress rule for port 443"
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0 2>&1 | grep "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 80 already present" || echo "Added ALB ingress rule for port 80" || true
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0 2>&1 | grep "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 443 already present" || echo "Added ALB ingress rule for port 443" || true
 
           # Create/reuse task security group (allow traffic from ALB)
           TASK_SG=$(aws ec2 describe-security-groups \
@@ -160,8 +160,8 @@ jobs:
           fi
 
           # Ensure task security group ingress and egress rules exist (check if rule exists before adding)
-          aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "Task security group already allows traffic from ALB" || echo "Added task security group ingress rule"
-          aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "Task security group egress already open" || echo "Added task security group egress rule"
+          aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG 2>&1 | grep "InvalidPermission.Duplicate" && echo "Task security group already allows traffic from ALB" || echo "Added task security group ingress rule" || true
+          aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 2>&1 | grep "InvalidPermission.Duplicate" && echo "Task security group egress already open" || echo "Added task security group egress rule" || true
 
           # Create or reuse ALB
           SUBNET_ARG=$(echo "$SUBNET_IDS" | sed 's/,/ /g')
