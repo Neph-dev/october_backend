@@ -1,510 +1,190 @@
-name: Deploy to AWS ECS
+name: Deploy Go backend to ECS Fargate
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: eu-west-1
   ECR_REPOSITORY: october-backend
-  ECS_SERVICE: october-backend-service
   ECS_CLUSTER: october-cluster
-  ECS_TASK_DEFINITION: aws/ecs-task-definition.json
+  ECS_SERVICE: october-backend-service
+  ECS_TASK_DEFINITION: aws/ecs-task-definition.json     
+  VPC_ID: $(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)                            
+  SUBNET_IDS: $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[*].SubnetId' --output text | tr ' ' ',')
 
 jobs:
   deploy:
-    name: Deploy to AWS
-    runs-on: ubuntu-latest
-    environment: production
-
+    runs-on: ubuntu-latest    
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/github-deploy-role
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Get AWS Account ID
+        id: account-id
+        run: echo "account-id=$(aws sts get-caller-identity --query 'Account' --output text)" >> $GITHUB_OUTPUT
 
-    - name: Get AWS Account ID
-      id: account-id
-      run: |
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        echo "account-id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+      - name: Build and push Docker image
+        env:
+          ACCOUNT_ID: ${{ steps.account-id.outputs.account-id }}
+        run: |
+          IMAGE_TAG=$(git rev-parse --short HEAD)
+          FULL_IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-    - name: Replace Account ID in task definition
-      run: |
-        sed -i 's/YOUR_ACCOUNT_ID/${{ steps.account-id.outputs.account-id }}/g' ${{ env.ECS_TASK_DEFINITION }}
-        
-        # Fix the task role ARN to use the execution role (since we don't have a separate task role)
-        sed -i 's/"taskRoleArn": "arn:aws:iam::${{ steps.account-id.outputs.account-id }}:role\/ecsTaskRole"/"taskRoleArn": "arn:aws:iam::${{ steps.account-id.outputs.account-id }}:role\/ecsTaskExecutionRole-october"/g' ${{ env.ECS_TASK_DEFINITION }}
-        
-        # Update execution role name
-        sed -i 's/ecsTaskExecutionRole"/ecsTaskExecutionRole-october"/g' ${{ env.ECS_TASK_DEFINITION }}
+          aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} || \
+            aws ecr create-repository --repository-name ${ECR_REPOSITORY}
 
-    - name: Create AWS infrastructure if it doesn't exist
-      run: |
-        echo "🚀 Setting up AWS infrastructure..."
-        
-        # 1. Create ECR repository if it doesn't exist
-        if ! aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
-          echo "Creating ECR repository: ${{ env.ECR_REPOSITORY }}"
-          aws ecr create-repository \
-            --repository-name ${{ env.ECR_REPOSITORY }} \
-            --region ${{ env.AWS_REGION }} \
-            --image-scanning-configuration scanOnPush=true \
-            --encryption-configuration encryptionType=AES256
-          
-          # Set lifecycle policy
-          cat > /tmp/lifecycle-policy.json << 'EOF'
-        {
-          "rules": [
-            {
-              "rulePriority": 1,
-              "description": "Keep last 10 tagged images",
-              "selection": {
-                "tagStatus": "tagged",
-                "tagPrefixList": ["v", "latest"],
-                "countType": "imageCountMoreThan",
-                "countNumber": 10
-              },
-              "action": {
-                "type": "expire"
-              }
-            },
-            {
-              "rulePriority": 2,
-              "description": "Keep last 5 commit-hash tagged images",
-              "selection": {
-                "tagStatus": "tagged",
-                "countType": "imageCountMoreThan",
-                "countNumber": 5
-              },
-              "action": {
-                "type": "expire"
-              }
-            },
-            {
-              "rulePriority": 3,
-              "description": "Delete untagged images older than 1 day",
-              "selection": {
-                "tagStatus": "untagged",
-                "countType": "sinceImagePushed",
-                "countUnit": "days",
-                "countNumber": 1
-              },
-              "action": {
-                "type": "expire"
-              }
-            }
-          ]
-        }
-        EOF
-          
-          aws ecr put-lifecycle-policy \
-            --repository-name ${{ env.ECR_REPOSITORY }} \
-            --region ${{ env.AWS_REGION }} \
-            --lifecycle-policy-text file:///tmp/lifecycle-policy.json
-          
-          echo "✅ ECR repository created successfully"
-        else
-          echo "✅ ECR repository already exists"
-        fi
-        
-        # 2. Create ECS service-linked role if it doesn't exist
-        echo "Checking ECS service-linked role..."
-        if ! aws iam get-role --role-name AWSServiceRoleForECS > /dev/null 2>&1; then
-          echo "Creating ECS service-linked role..."
-          aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || echo "Service-linked role might already exist or be in process"
-          # Wait a moment for the role to be available
-          sleep 10
-        else
-          echo "✅ ECS service-linked role already exists"
-        fi
-        
-        # 3. Create ECS cluster if it doesn't exist or is inactive
-        echo "🔍 Checking ECS cluster status..."
-        CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null || echo "NOT_FOUND")
-        
-        if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
-          echo "✅ ECS cluster is active: ${{ env.ECS_CLUSTER }}"
-        elif [ "$CLUSTER_STATUS" = "INACTIVE" ]; then
-          echo "⚠️  ECS cluster is inactive, deleting and recreating..."
-          aws ecs delete-cluster --cluster ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} || echo "Failed to delete inactive cluster"
-          sleep 10
-          CLUSTER_STATUS="NOT_FOUND"
-        fi
-        
-        if [ "$CLUSTER_STATUS" = "NOT_FOUND" ] || [ "$CLUSTER_STATUS" = "null" ]; then
-          echo "🆕 Creating ECS cluster: ${{ env.ECS_CLUSTER }}"
-          aws ecs create-cluster \
-            --cluster-name ${{ env.ECS_CLUSTER }} \
-            --region ${{ env.AWS_REGION }} \
-            --capacity-providers FARGATE \
-            --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1
-          
-          # Wait for cluster to be active
-          echo "⏳ Waiting for cluster to become active..."
-          for i in {1..30}; do
-            CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text 2>/dev/null || echo "CHECKING")
-            if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
-              echo "✅ ECS cluster is now active"
-              break
-            fi
-            echo "⏳ Cluster status: $CLUSTER_STATUS (attempt $i/30)"
-            sleep 10
-          done
-          
-          if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
-            echo "❌ Cluster failed to become active after 5 minutes"
-            exit 1
-          fi
-        fi
-        
-        # 4. Create CloudWatch log group
-        LOG_GROUP_NAME="/ecs/october-backend"
-        if ! aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --query 'logGroups[?logGroupName==`'$LOG_GROUP_NAME'`]' --output text | grep -q "$LOG_GROUP_NAME"; then
-          echo "Creating CloudWatch log group: $LOG_GROUP_NAME"
-          aws logs create-log-group --log-group-name "$LOG_GROUP_NAME"
-          aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 30
-          echo "✅ CloudWatch log group created"
-        else
-          echo "✅ CloudWatch log group already exists"
-        fi
-        
-        # 5. Create task execution role if it doesn't exist
-        TASK_EXECUTION_ROLE_NAME="ecsTaskExecutionRole-october"
-        if ! aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" > /dev/null 2>&1; then
-          echo "Creating ECS task execution role: $TASK_EXECUTION_ROLE_NAME"
-          
-          # Create assume role policy
-          cat > /tmp/assume-role-policy.json << 'EOF'
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "ecs-tasks.amazonaws.com"
-              },
-              "Action": "sts:AssumeRole"
-            }
-          ]
-        }
-        EOF
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
-          aws iam create-role \
-            --role-name "$TASK_EXECUTION_ROLE_NAME" \
-            --assume-role-policy-document file:///tmp/assume-role-policy.json
+          docker build -t ${FULL_IMAGE} .
+          docker push ${FULL_IMAGE}
 
-          # Attach AWS managed policy
-          aws iam attach-role-policy \
-            --role-name "$TASK_EXECUTION_ROLE_NAME" \
-            --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          echo "image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
 
-          # Create custom policy for Systems Manager and CloudWatch access
-          cat > /tmp/ssm-policy.json << 'EOF'
-        {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
+      - name: Ensure IAM execution role exists
+        run: |
+          ROLE_NAME="ecsTaskExecutionRole"
+          POLICY_ARN="arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "Creating IAM role $ROLE_NAME"
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
                     "Effect": "Allow",
-                    "Action": [
-                        "ssm:GetParameter",
-                        "ssm:GetParameters",
-                        "ssm:GetParametersByPath"
-                    ],
-                    "Resource": [
-                        "arn:aws:ssm:*:*:parameter/october/*"
-                    ]
-                },
-                {
-                    "Effect": "Allow",
-                    "Action": [
-                        "logs:CreateLogGroup",
-                        "logs:CreateLogStream",
-                        "logs:PutLogEvents"
-                    ],
-                    "Resource": [
-                        "arn:aws:logs:*:*:log-group:/ecs/october-backend*"
-                    ]
-                }
-            ]
-        }
-        EOF
-
-          aws iam put-role-policy \
-            --role-name "$TASK_EXECUTION_ROLE_NAME" \
-            --policy-name "SSMParameterAccess" \
-            --policy-document file:///tmp/ssm-policy.json
-
-          # Clean up temporary files
-          rm /tmp/assume-role-policy.json /tmp/ssm-policy.json
-          
-          echo "✅ Task execution role created successfully"
-        else
-          echo "✅ Task execution role already exists"
-        fi
-        
-        # 6. Create essential Systems Manager parameters if they don't exist
-        echo "Setting up essential Systems Manager parameters..."
-        
-        # DATABASE_URI - required
-        if ! aws ssm get-parameter --name "/october/DATABASE_URI" > /dev/null 2>&1; then
-          echo "⚠️  DATABASE_URI parameter missing - creating placeholder"
-          aws ssm put-parameter \
-            --name "/october/DATABASE_URI" \
-            --value "mongodb://placeholder-update-this-value" \
-            --type "SecureString" \
-            --description "MongoDB connection string for October Backend (UPDATE THIS VALUE)"
-        fi
-        
-        # Optional parameters - create placeholders if they don't exist
-        for param in "OPENAI_API_KEY" "CUSTOM_SEARCH_API_KEY" "CUSTOM_SEARCH_ENGINE_ID" "FINNHUB_API_KEY"; do
-          if ! aws ssm get-parameter --name "/october/$param" > /dev/null 2>&1; then
-            echo "Creating placeholder for optional parameter: $param"
-            aws ssm put-parameter \
-              --name "/october/$param" \
-              --value "placeholder-update-if-needed" \
-              --type "SecureString" \
-              --description "Optional parameter for October Backend" || echo "Parameter might already exist"
+                    "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+                    "Action": "sts:AssumeRole"
+                  }
+                ]
+              }'
+            aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN"
+          else
+            echo "IAM role $ROLE_NAME already exists"
           fi
-        done
 
-    - name: Build, tag, and push image to Amazon ECR
-      id: build-image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        # Build a docker container and push it to ECR
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      - name: Prepare ECS task definition
+        env:
+          ACCOUNT_ID: ${{ steps.account-id.outputs.account-id }}
+        run: |
+          IMAGE="${{ steps.build-and-push.outputs.image }}"
+          jq \
+            --arg img "$IMAGE" \
+            --arg exec "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole" \
+            --arg task "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole" \
+            '.containerDefinitions[0].image=$img | .executionRoleArn=$exec | .taskRoleArn=$task' \
+            ${{ env.ECS_TASK_DEFINITION }} > /tmp/ecs-task-def.json
+          mv /tmp/ecs-task-def.json ${{ env.ECS_TASK_DEFINITION }}
 
-    - name: Fill in the new image ID in the Amazon ECS task definition
-      id: task-def
-      uses: aws-actions/amazon-ecs-render-task-definition@v1
-      with:
-        task-definition: ${{ env.ECS_TASK_DEFINITION }}
-        container-name: october-backend
-        image: ${{ steps.build-image.outputs.image }}
-
-    - name: Register task definition and create/update service
-      run: |
-        echo "📋 Registering ECS task definition..."
-        
-        # Display task definition for debugging
-        echo "🔍 Task definition contents:"
-        cat ${{ steps.task-def.outputs.task-definition }} | jq .
-        
-        # Register the task definition
-        TASK_DEF_ARN=$(aws ecs register-task-definition \
-          --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-          --query 'taskDefinition.taskDefinitionArn' \
-          --output text)
-        
-        echo "✅ Task definition registered: $TASK_DEF_ARN"
-        
-        # Get default VPC and subnets (needed for both create and update)
-        VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text)
-        SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text | tr '\t' ',')
-        
-        echo "🌐 Using VPC: $VPC_ID"
-        echo "🌐 Using subnets: $SUBNET_IDS"
-        
-        # Create security group if it doesn't exist
-        SG_NAME="october-backend-sg"
-        if ! aws ec2 describe-security-groups --group-names "$SG_NAME" > /dev/null 2>&1; then
-          echo "🔒 Creating security group..."
-          SG_ID=$(aws ec2 create-security-group \
-            --group-name "$SG_NAME" \
-            --description "Security group for October Backend" \
-            --vpc-id "$VPC_ID" \
-            --query 'GroupId' \
+      - name: Register ECS task definition
+        id: register
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ env.ECS_TASK_DEFINITION }} \
+            --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          
-          # Allow inbound traffic on port 8080
-          aws ec2 authorize-security-group-ingress \
-            --group-id "$SG_ID" \
-            --protocol tcp \
+          echo "task-def-arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "Registered task definition: $TASK_DEF_ARN"
+
+      - name: Setup networking and load balancer
+        id: alb
+        run: |
+          # Create ALB SG (open 80/443)
+          ALB_SG=$(aws ec2 create-security-group \
+            --group-name october-alb-sg \
+            --description "ALB SG" \
+            --vpc-id $VPC_ID \
+            --query 'GroupId' --output text 2>/dev/null || \
+            aws ec2 describe-security-groups --filters Name=group-name,Values=october-alb-sg --query 'SecurityGroups[0].GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0 || true
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0 || true
+
+          # Create Task SG (allow ALB only)
+          TASK_SG=$(aws ec2 create-security-group \
+            --group-name october-tasks-sg \
+            --description "Tasks SG" \
+            --vpc-id $VPC_ID \
+            --query 'GroupId' --output text 2>/dev/null || \
+            aws ec2 describe-security-groups --filters Name=group-name,Values=october-tasks-sg --query 'SecurityGroups[0].GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG || true
+          aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 || true
+
+          # Create ALB
+          SUBNET_ARG=$(echo $SUBNET_IDS | sed 's/,/ /g')
+          ALB_ARN=$(aws elbv2 create-load-balancer \
+            --name october-alb \
+            --subnets $SUBNET_ARG \
+            --security-groups $ALB_SG \
+            --scheme internet-facing \
+            --type application \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || \
+            aws elbv2 describe-load-balancers --names october-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns $ALB_ARN --query 'LoadBalancers[0].DNSName' --output text)
+
+          # Create Target Group
+          TG_ARN=$(aws elbv2 create-target-group \
+            --name october-backend-tg \
+            --protocol HTTP \
             --port 8080 \
-            --cidr 0.0.0.0/0
-          
-          # Allow all outbound traffic (needed for database connections, etc.)
-          aws ec2 authorize-security-group-egress \
-            --group-id "$SG_ID" \
-            --protocol -1 \
-            --cidr 0.0.0.0/0 || echo "Egress rule might already exist"
-          
-          echo "✅ Security group created: $SG_ID"
-        else
-          SG_ID=$(aws ec2 describe-security-groups --group-names "$SG_NAME" --query 'SecurityGroups[0].GroupId' --output text)
-          echo "✅ Using existing security group: $SG_ID"
-        fi
-        
-        # Check if service exists and is active
-        echo "🔍 Checking ECS service status..."
-        SERVICE_RESPONSE=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
-        
-        # Parse the response to determine service status
-        if [ "$SERVICE_RESPONSE" = "ERROR" ]; then
-          SERVICE_STATUS="NOT_FOUND"
-          echo "❌ Service not found or cluster not accessible"
-        else
-          # Check if services array is empty (service doesn't exist)
-          SERVICE_COUNT=$(echo "$SERVICE_RESPONSE" | jq -r '.services | length')
-          if [ "$SERVICE_COUNT" = "0" ]; then
-            SERVICE_STATUS="NOT_FOUND"
-            echo "❌ Service does not exist in cluster"
-          else
-            SERVICE_STATUS=$(echo "$SERVICE_RESPONSE" | jq -r '.services[0].status')
-            echo "📋 Service status: $SERVICE_STATUS"
-          fi
-        fi
-        
-        if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
-          echo "📦 Updating existing ECS service..."
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition "$TASK_DEF_ARN" \
-            --desired-count 1 \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}"
-            
-        elif [ "$SERVICE_STATUS" = "INACTIVE" ] || [ "$SERVICE_STATUS" = "DRAINING" ]; then
-          echo "⚠️  Service is $SERVICE_STATUS, deleting and recreating..."
-          aws ecs delete-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force || echo "Failed to delete service"
-          
-          # Wait for service to be fully deleted
-          echo "⏳ Waiting for service deletion..."
-          for i in {1..12}; do
-            sleep 10
-            SERVICE_CHECK=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
-            if [ "$SERVICE_CHECK" = "ERROR" ] || [ "$(echo "$SERVICE_CHECK" | jq -r '.services | length')" = "0" ]; then
-              echo "✅ Service deleted successfully"
-              break
-            fi
-            echo "⏳ Still waiting for service deletion (attempt $i/12)..."
-          done
-          SERVICE_STATUS="NOT_FOUND"
-        fi
-        
-        if [ "$SERVICE_STATUS" = "NOT_FOUND" ] || [ "$SERVICE_STATUS" = "null" ]; then
-          echo "🆕 Creating new ECS service..."
-          
-          # Create the service (note: health-check-grace-period-seconds is only for ALB/NLB target groups)
-          aws ecs create-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service-name ${{ env.ECS_SERVICE }} \
-            --task-definition "$TASK_DEF_ARN" \
-            --desired-count 1 \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
-            --enable-execute-command \
-            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=50"
-            
-          echo "✅ Service creation initiated"
-        fi
-        
-        # Wait for service to be created and become stable
-        echo "⏳ Waiting for service to stabilize (timeout: 15 minutes)..."
-        
-        # First, wait for service to exist
-        echo "🔍 Waiting for service to be created..."
-        for i in {1..30}; do
-          SERVICE_CHECK=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo "ERROR")
-          if [ "$SERVICE_CHECK" != "ERROR" ]; then
-            SERVICE_COUNT=$(echo "$SERVICE_CHECK" | jq -r '.services | length')
-            if [ "$SERVICE_COUNT" != "0" ]; then
-              echo "✅ Service exists, proceeding to stability check"
-              break
-            fi
-          fi
-          echo "⏳ Service not yet created (attempt $i/30)..."
-          sleep 10
-        done
-        
-        # Now wait for service to become stable
-        if timeout 900 aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }}; then
-          echo "✅ Service deployment completed successfully"
-        else
-          echo "❌ Service deployment timed out or failed"
-          
-          # Get service details for debugging
-          echo "🔍 Service details:"
-          SERVICE_DEBUG=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} 2>/dev/null || echo '{"services":[],"failures":[{"reason":"SERVICE_NOT_FOUND"}]}')
-          echo "$SERVICE_DEBUG" | jq .
-          
-          # Check if service exists before trying to get tasks
-          SERVICE_EXISTS=$(echo "$SERVICE_DEBUG" | jq -r '.services | length')
-          if [ "$SERVICE_EXISTS" != "0" ]; then
-            # Get task details
-            echo "🔍 Task details:"
-            TASK_ARNS=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query 'taskArns' --output text 2>/dev/null || echo "None")
-            if [ ! -z "$TASK_ARNS" ] && [ "$TASK_ARNS" != "None" ]; then
-              aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARNS | jq .
-            else
-              echo "No tasks found for service"
-            fi
-            
-            # Get recent service events
-            echo "🔍 Recent service events:"
-            echo "$SERVICE_DEBUG" | jq -r '.services[0].events[:10][] | "\(.createdAt) - \(.message)"' 2>/dev/null || echo "No events available"
-          else
-            echo "❌ Service was not created successfully"
-          fi
-          
-          exit 1
-        fi
+            --vpc-id $VPC_ID \
+            --target-type ip \
+            --health-check-path "/health" \
+            --health-check-protocol HTTP \
+            --health-check-interval-seconds 15 \
+            --matcher HttpCode=200 \
+            --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || \
+            aws elbv2 describe-target-groups --names october-backend-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
 
-    - name: Post-deployment health check
-      run: |
-        echo "Waiting for service to stabilize..."
-        sleep 60
-        
-        # Get the public IP of the service
-        TASK_ARN=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query "taskArns[0]" --output text)
-        
-        if [ "$TASK_ARN" != "None" ]; then
-          PUBLIC_IP=$(aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text | xargs -I {} aws ec2 describe-network-interfaces --network-interface-ids {} --query "NetworkInterfaces[0].Association.PublicIp" --output text)
-          
-          if [ "$PUBLIC_IP" != "None" ]; then
-            echo "Service endpoint: http://$PUBLIC_IP:8080"
-            echo "Testing health endpoint..."
-            
-            # Retry liveness check up to 5 times (using liveness endpoint for consistency with ECS health check)
-            echo "🏥 Testing liveness endpoint (same as ECS health check)..."
-            for i in {1..5}; do
-              if curl -f -s "http://$PUBLIC_IP:8080/liveness" >/dev/null 2>&1; then
-                echo "✅ Liveness check passed"
-                echo "Response:"
-                curl -s "http://$PUBLIC_IP:8080/liveness" | jq . || echo "Raw response:"
-                curl -s "http://$PUBLIC_IP:8080/liveness"
-                break
-              else
-                echo "⏳ Liveness check attempt $i failed, retrying in 10 seconds..."
-                sleep 10
-              fi
-            done
-            
-            # Also test health endpoint for comparison
-            echo "🔍 Testing full health endpoint for debugging:"
-            curl -s "http://$PUBLIC_IP:8080/health" | jq . || echo "Health endpoint not responding or not JSON"
-          fi
-        fi
+          # Create Listener
+          aws elbv2 create-listener \
+            --load-balancer-arn $ALB_ARN \
+            --protocol HTTP \
+            --port 80 \
+            --default-actions Type=forward,TargetGroupArn=$TG_ARN >/dev/null 2>&1 || true
 
-    - name: Notify deployment success
-      if: success()
-      run: |
-        echo "🎉 Deployment successful!"
-        echo "The October Backend has been deployed to AWS ECS."
+          echo "alb-sg=$ALB_SG" >> $GITHUB_OUTPUT
+          echo "task-sg=$TASK_SG" >> $GITHUB_OUTPUT
+          echo "tg-arn=$TG_ARN" >> $GITHUB_OUTPUT
+          echo "alb-dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $ALB_DNS"
+
+      - name: Create or update ECS service
+        env:
+          TASK_DEF_ARN: ${{ steps.register.outputs.task-def-arn }}
+          TG_ARN: ${{ steps.alb.outputs.tg-arn }}
+          TASK_SG: ${{ steps.alb.outputs.task-sg }}
+        run: |
+          CLUSTER=${ECS_CLUSTER}
+          SERVICE=${ECS_SERVICE}
+          SUBNET_ARG=$(echo $SUBNET_IDS | sed 's/,/ /g')
+          if aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+            echo "Updating existing ECS service..."
+            aws ecs update-service \
+              --cluster $CLUSTER \
+              --service $SERVICE \
+              --task-definition $TASK_DEF_ARN \
+              --force-new-deployment
+          else
+            echo "Creating new ECS service..."
+            aws ecs create-service \
+              --cluster $CLUSTER \
+              --service-name $SERVICE \
+              --task-definition $TASK_DEF_ARN \
+              --desired-count 1 \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}" \
+              --load-balancers "targetGroupArn=$TG_ARN,containerName=october-backend,containerPort=8080" \
+              --enable-execute-command \
+              --deployment-configuration "maximumPercent=200,minimumHealthyPercent=50"
+          fi
+
+      - name: Output ALB DNS
+        run: echo "Backend URL; http://${{ steps.alb.outputs.alb-dns }}/health"
+  
