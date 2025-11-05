@@ -30,6 +30,7 @@ jobs:
         run: echo "account-id=$(aws sts get-caller-identity --query 'Account' --output text)" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
+        id: build-image
         env:
           ACCOUNT_ID: ${{ steps.account-id.outputs.account-id }}
         run: |
@@ -73,7 +74,7 @@ jobs:
         env:
           ACCOUNT_ID: ${{ steps.account-id.outputs.account-id }}
         run: |
-          IMAGE="${{ steps.build-and-push.outputs.image }}"
+          IMAGE="${{ steps.build-image.outputs.image }}"
           jq \
             --arg img "$IMAGE" \
             --arg exec "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole" \
