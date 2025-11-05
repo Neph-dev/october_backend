@@ -142,7 +142,7 @@ jobs:
           aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 || true
 
           # Create ALB
-          SUBNET_ARG=$(echo $SUBNET_IDS | sed 's/,/ /g')
+          SUBNET_ARG=$(echo "$SUBNET_IDS" | sed 's/,/ /g')
           ALB_ARN=$(aws elbv2 create-load-balancer \
             --name october-alb \
             --subnets $SUBNET_ARG \
@@ -151,7 +151,17 @@ jobs:
             --type application \
             --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || \
             aws elbv2 describe-load-balancers --names october-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-          ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns $ALB_ARN --query 'LoadBalancers[0].DNSName' --output text)
+
+          # Ensure the load balancer exists and is active before proceeding
+          if [ "$ALB_ARN" = "None" ] || [ -z "$ALB_ARN" ]; then
+            echo "Failed to create or locate the application load balancer"
+            exit 1
+          fi
+
+          echo "Waiting for load balancer to become active..."
+          aws elbv2 wait load-balancer-available --load-balancer-arns "$ALB_ARN"
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text)
 
           # Create Target Group
           TG_ARN=$(aws elbv2 create-target-group \
