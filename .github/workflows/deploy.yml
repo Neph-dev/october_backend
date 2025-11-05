@@ -139,17 +139,17 @@ jobs:
           fi
 
           # Ensure ALB ingress rules exist
-          if ! aws ec2 describe-security-groups --group-ids $ALB_SG \
-            --query "SecurityGroups[0].IpPermissions[?FromPort==\`80\` && ToPort==\`80\` && IpProtocol=='tcp'].IpRanges[?CidrIp=='0.0.0.0/0']" \
-            --output text | grep -q '0.0.0.0/0'; then
+          if [ "$(aws ec2 describe-security-group-rules \
+            --filters Name=group-id,Values=$ALB_SG Name=ip-permission.from-port,Values=80 Name=ip-permission.to-port,Values=80 Name=ip-permission.ip-protocol,Values=tcp Name=cidr,Values=0.0.0.0/0 \
+            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
             aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0
           else
             echo "ALB ingress rule for port 80 already present"
           fi
 
-          if ! aws ec2 describe-security-groups --group-ids $ALB_SG \
-            --query "SecurityGroups[0].IpPermissions[?FromPort==\`443\` && ToPort==\`443\` && IpProtocol=='tcp'].IpRanges[?CidrIp=='0.0.0.0/0']" \
-            --output text | grep -q '0.0.0.0/0'; then
+          if [ "$(aws ec2 describe-security-group-rules \
+            --filters Name=group-id,Values=$ALB_SG Name=ip-permission.from-port,Values=443 Name=ip-permission.to-port,Values=443 Name=ip-permission.ip-protocol,Values=tcp Name=cidr,Values=0.0.0.0/0 \
+            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
             aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0
           else
             echo "ALB ingress rule for port 443 already present"
@@ -172,17 +172,17 @@ jobs:
             echo "Reusing task security group: $TASK_SG"
           fi
 
-          if ! aws ec2 describe-security-groups --group-ids $TASK_SG \
-            --query "SecurityGroups[0].IpPermissions[?FromPort==\`8080\` && ToPort==\`8080\` && IpProtocol=='tcp'].UserIdGroupPairs[?GroupId=='$ALB_SG']" \
-            --output text | grep -q $ALB_SG; then
+          if [ "$(aws ec2 describe-security-group-rules \
+            --filters Name=group-id,Values=$TASK_SG Name=ip-permission.from-port,Values=8080 Name=ip-permission.to-port,Values=8080 Name=ip-permission.ip-protocol,Values=tcp Name=referenced-group-id,Values=$ALB_SG \
+            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
             aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG
           else
             echo "Task security group already allows traffic from ALB"
           fi
 
-          if ! aws ec2 describe-security-groups --group-ids $TASK_SG \
-            --query "SecurityGroups[0].IpPermissionsEgress[?IpProtocol=='-1'].IpRanges[?CidrIp=='0.0.0.0/0']" \
-            --output text | grep -q '0.0.0.0/0'; then
+          if [ "$(aws ec2 describe-security-group-rules \
+            --filters Name=group-id,Values=$TASK_SG Name=is-egress,Values=true Name=ip-permission.ip-protocol,Values=-1 Name=cidr,Values=0.0.0.0/0 \
+            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
             aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0
           else
             echo "Task security group egress already open"
