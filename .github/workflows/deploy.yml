@@ -4,18 +4,12 @@ on:
   push:
     branches: [ main ]
 
-# permissions:
-#   id-token: write
-#   contents: read
-
 env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: october-backend
   ECS_CLUSTER: october-cluster
   ECS_SERVICE: october-backend-service
-  ECS_TASK_DEFINITION: aws/ecs-task-definition.json     
-  VPC_ID: ${{ steps.network.outputs.vpc-id }}
-  SUBNET_IDS: ${{ steps.network.outputs.subnet-ids }}
+  ECS_TASK_DEFINITION: aws/ecs-task-definition.json
 
 jobs:
   deploy:
