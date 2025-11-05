@@ -138,22 +138,9 @@ jobs:
             echo "Reusing ALB security group: $ALB_SG"
           fi
 
-          # Ensure ALB ingress rules exist
-          if [ "$(aws ec2 describe-security-group-rules \
-            --filters Name=group-id,Values=$ALB_SG Name=ip-permission.from-port,Values=80 Name=ip-permission.to-port,Values=80 Name=ip-permission.ip-protocol,Values=tcp Name=cidr,Values=0.0.0.0/0 \
-            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
-            aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0
-          else
-            echo "ALB ingress rule for port 80 already present"
-          fi
-
-          if [ "$(aws ec2 describe-security-group-rules \
-            --filters Name=group-id,Values=$ALB_SG Name=ip-permission.from-port,Values=443 Name=ip-permission.to-port,Values=443 Name=ip-permission.ip-protocol,Values=tcp Name=cidr,Values=0.0.0.0/0 \
-            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
-            aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0
-          else
-            echo "ALB ingress rule for port 443 already present"
-          fi
+          # Ensure ALB ingress rules exist (check if rule exists before adding)
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 80 already present" || echo "Added ALB ingress rule for port 80"
+          aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "ALB ingress rule for port 443 already present" || echo "Added ALB ingress rule for port 443"
 
           # Create/reuse task security group (allow traffic from ALB)
           TASK_SG=$(aws ec2 describe-security-groups \
@@ -172,21 +159,9 @@ jobs:
             echo "Reusing task security group: $TASK_SG"
           fi
 
-          if [ "$(aws ec2 describe-security-group-rules \
-            --filters Name=group-id,Values=$TASK_SG Name=ip-permission.from-port,Values=8080 Name=ip-permission.to-port,Values=8080 Name=ip-permission.ip-protocol,Values=tcp Name=referenced-group-id,Values=$ALB_SG \
-            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
-            aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG
-          else
-            echo "Task security group already allows traffic from ALB"
-          fi
-
-          if [ "$(aws ec2 describe-security-group-rules \
-            --filters Name=group-id,Values=$TASK_SG Name=is-egress,Values=true Name=ip-permission.ip-protocol,Values=-1 Name=cidr,Values=0.0.0.0/0 \
-            --query 'length(SecurityGroupRules)' --output text)" = "0" ]; then
-            aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0
-          else
-            echo "Task security group egress already open"
-          fi
+          # Ensure task security group ingress and egress rules exist (check if rule exists before adding)
+          aws ec2 authorize-security-group-ingress --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "Task security group already allows traffic from ALB" || echo "Added task security group ingress rule"
+          aws ec2 authorize-security-group-egress --group-id $TASK_SG --protocol -1 --cidr 0.0.0.0/0 2>&1 | grep -q "InvalidPermission.Duplicate" && echo "Task security group egress already open" || echo "Added task security group egress rule"
 
           # Create or reuse ALB
           SUBNET_ARG=$(echo "$SUBNET_IDS" | sed 's/,/ /g')
