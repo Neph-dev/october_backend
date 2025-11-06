@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 
 env:
-  AWS_REGION: eu-west-1
+  AWS_REGION: us-east-1
   ECR_REPOSITORY: october-backend
   ECS_CLUSTER: october-cluster
   ECS_SERVICE: october-backend-service
