@@ -269,7 +269,17 @@ jobs:
         run: |
           CLUSTER=${ECS_CLUSTER}
           SERVICE=${ECS_SERVICE}
-          SUBNET_ARG=$(echo $SUBNET_IDS | sed 's/,/ /g')
+          # Guard: ensure we discovered at least one subnet ID
+          if [ -z "$SUBNET_IDS" ] || [ "$SUBNET_IDS" = "None" ]; then
+            echo "ERROR: No public subnets found (map-public-ip-on-launch=true) in VPC $VPC_ID. Cannot create ECS service."
+            exit 1
+          fi
+
+          # Build a proper JSON network configuration to avoid CLI shorthand parsing issues
+          # Convert comma-separated subnet IDs -> JSON array ["subnet-1","subnet-2",...]
+          SUBNETS_JSON=$(echo "$SUBNET_IDS" | tr ',' '\n' | jq -R . | jq -s .)
+          NETWORK_JSON=$(jq -n --argjson subnets "$SUBNETS_JSON" --arg sg "$TASK_SG" '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"ENABLED"}}')
+
           if aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
             echo "Updating existing ECS service..."
             aws ecs update-service \
@@ -285,7 +295,7 @@ jobs:
               --task-definition $TASK_DEF_ARN \
               --desired-count 1 \
               --launch-type FARGATE \
-              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}" \
+              --network-configuration "$NETWORK_JSON" \
               --load-balancers "targetGroupArn=$TG_ARN,containerName=october-backend,containerPort=8080" \
               --enable-execute-command \
               --deployment-configuration "maximumPercent=200,minimumHealthyPercent=50"
