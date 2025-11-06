@@ -1,0 +1,83 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Conventional Commits Guidelines
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# TYPE (required):
+#   feat:     A new feature
+#   fix:      A bug fix
+#   docs:     Documentation only changes
+#   style:    Code style (formatting, missing semi colons, etc)
+#   refactor: Code change that neither fixes a bug nor adds a feature
+#   perf:     Performance improvements
+#   test:     Adding or updating tests
+#   build:    Changes to build system or dependencies
+#   ci:       Changes to CI configuration files and scripts
+#   chore:    Other changes (don't modify src or test files)
+#   revert:   Reverts a previous commit
+#
+# SCOPE (optional):
+#   Noun describing the section of codebase affected
+#   Examples: api, auth, db, cache, ui, config
+#
+# SUBJECT (required):
+#   Short description (max 100 chars)
+#   Use imperative mood: "add" not "added" or "adds"
+#   Don't capitalize first letter
+#   No period at the end
+#
+# BODY (optional):
+#   Detailed explanation of the change
+#   Wrap at 72 characters
+#   Explain what and why, not how
+#
+# FOOTER (optional):
+#   Breaking changes: BREAKING CHANGE: description
+#   Issue references: Closes #123, Fixes #456
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Examples:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Simple feature:
+#   feat: add user authentication
+#
+# Feature with scope:
+#   feat(api): add market data endpoint
+#
+# Bug fix:
+#   fix: resolve memory leak in RSS processor
+#
+# Breaking change (option 1):
+#   feat!: redesign API response format
+#
+# Breaking change (option 2):
+#   feat: redesign authentication system
+#   
+#   This changes the entire auth flow requiring users to re-authenticate.
+#   
+#   BREAKING CHANGE: Old auth tokens are no longer valid
+#
+# With issue reference:
+#   fix(auth): correct JWT token validation
+#   
+#   Closes #123
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Version Bumping (Semantic Versioning):
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+#   feat:     → Minor version bump (1.0.0 → 1.1.0)
+#   fix:      → Patch version bump (1.0.0 → 1.0.1)
+#   feat!:    → Major version bump (1.0.0 → 2.0.0)
+#   Others:   → Patch version bump (1.0.0 → 1.0.1)
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# To use this template automatically:
+#   git config commit.template .gitmessage
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
