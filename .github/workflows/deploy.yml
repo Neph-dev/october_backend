@@ -10,8 +10,8 @@ env:
   ECS_CLUSTER: october-cluster
   ECS_SERVICE: october-backend-service
   ECS_TASK_DEFINITION: aws/ecs-task-definition.json
-  CUSTOM_DOMAIN: oct.circuit-x.com
-  HOSTED_ZONE_NAME: circuit-x.com
+  CUSTOM_DOMAIN: ${{ secrets.OCTOBER_CUSTOM_DOMAIN }}
+  HOSTED_ZONE_NAME: ${{ secrets.HOSTED_ZONE_NAME }}
 
 jobs:
   deploy:
