@@ -48,6 +48,8 @@ jobs:
           echo "image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
 
       - name: Ensure IAM execution role exists
+        env:
+          ACCOUNT_ID: ${{ steps.account-id.outputs.account-id }}
         run: |
           ROLE_NAME="ecsTaskExecutionRole"
           POLICY_ARN="arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
@@ -69,6 +71,53 @@ jobs:
           else
             echo "IAM role $ROLE_NAME already exists"
           fi
+
+          # Create CloudWatch log group
+          LOG_GROUP_NAME="/ecs/october-backend"
+          if ! aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --query 'logGroups[?logGroupName==`'$LOG_GROUP_NAME'`]' --output text | grep -q "$LOG_GROUP_NAME"; then
+            echo "Creating CloudWatch log group: $LOG_GROUP_NAME"
+            aws logs create-log-group --log-group-name "$LOG_GROUP_NAME"
+            aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 30
+            echo "✅ CloudWatch log group created"
+          else
+            echo "✅ CloudWatch log group already exists"
+          fi
+
+          # Ensure the execution role can read SSM Parameter Store values under /october/* and decrypt if SecureString
+          POLICY_JSON=$(jq -n --arg region "$AWS_REGION" --arg account "$ACCOUNT_ID" '
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssm:GetParameter",
+                    "ssm:GetParameters",
+                    "ssm:GetParametersByPath"
+                  ],
+                  "Resource": [
+                    ("arn:aws:ssm:" + $region + ":" + $account + ":parameter/october"),
+                    ("arn:aws:ssm:" + $region + ":" + $account + ":parameter/october/*")
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*",
+                }
+              ]
+            }
+          ')
+
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name ecsTaskExecutionRoleParameterRead \
+            --policy-document "$POLICY_JSON"
 
       - name: Prepare ECS task definition
         env:
