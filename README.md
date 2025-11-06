@@ -6,7 +6,10 @@
 
 ### 🎥 [Watch the demo video](https://drive.proton.me/urls/RMB3TPKAWW#qua3g7VXghOJ)
 
-### 📚 [AWS Deployment Guide](DEPLOYMENT.md)
+### 📚 Documentation
+- [Quick Start Guide](QUICKSTART.md) - Development workflow and commit conventions
+- [AWS Deployment Guide](DEPLOYMENT.md) - Complete AWS setup and deployment
+- [Release Management Guide](RELEASES.md) - Automated releases and versioning
 
 A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
 
@@ -741,6 +744,33 @@ The application is production-ready and deployed on AWS using:
 **Production URL**: https://oct.circuit-x.com
 
 For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
+
+### CI/CD & Release Management
+
+The repository includes automated GitHub Actions workflows:
+
+#### Deployment Workflow
+- **Trigger**: Push to `main` branch
+- **Actions**: 
+  - Build and push Docker image to ECR
+  - Deploy to ECS Fargate
+  - Configure custom domain with HTTPS
+- **File**: `.github/workflows/deploy.yml`
+
+#### Release Workflow
+- **Trigger**: Successful deployment completion
+- **Actions**:
+  - Automatically determines version bump (major/minor/patch) based on commit messages
+  - Creates Git tag
+  - Generates release notes with categorized changes
+  - Creates GitHub release with production links
+- **File**: `.github/workflows/release.yml`
+
+**Commit Message Conventions** for version bumping:
+- `feat:` or `feature:` → Minor version bump (e.g., v1.0.0 → v1.1.0)
+- `fix:` or `bugfix:` → Patch version bump (e.g., v1.0.0 → v1.0.1)
+- `feat!:` or `BREAKING CHANGE:` → Major version bump (e.g., v1.0.0 → v2.0.0)
+- Other commits → Patch version bump
 
 ### Docker (Alternative)
 

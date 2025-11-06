@@ -1,0 +1,157 @@
+name: Create Release
+
+on:
+  workflow_run:
+    workflows: ["Deploy Go backend to ECS Fargate"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: get-latest-tag
+        run: |
+          # Get the latest tag, or use v0.0.0 if no tags exist
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest-tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: $LATEST_TAG"
+
+      - name: Determine version bump
+        id: version-bump
+        run: |
+          LATEST_TAG="${{ steps.get-latest-tag.outputs.latest-tag }}"
+          
+          # Remove 'v' prefix if present
+          VERSION=${LATEST_TAG#v}
+          
+          # Split version into major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Get commit messages since last tag
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"%s" ${LATEST_TAG}..HEAD)
+          fi
+          
+          # Determine version bump based on commit messages
+          if echo "$COMMITS" | grep -qiE "^(feat|feature)(\(.+\))?!:|^BREAKING CHANGE:|breaking change"; then
+            # Major version bump for breaking changes
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif echo "$COMMITS" | grep -qiE "^(feat|fix|refactor|perf|style)(\(.+\))?:"; then
+            # Minor version bump for new features
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif echo "$COMMITS" | grep -qiE "^(fix|bugfix|docs|doc|chore|test|ci|build)(\(.+\))?:"; then
+            # Patch version bump for fixes and other changes
+            PATCH=$((PATCH + 1))
+          else
+            echo "No bump"
+          fi
+          
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          LATEST_TAG="${{ steps.get-latest-tag.outputs.latest-tag }}"
+          NEW_VERSION="${{ steps.version-bump.outputs.new-version }}"
+          
+          # Create release notes file
+          NOTES_FILE="release_notes.md"
+          
+          echo "# Release ${NEW_VERSION}" > $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          echo "**Deployment Date:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          # Get commits since last tag
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" ${LATEST_TAG}..HEAD)
+          fi
+          
+          # Categorize commits
+          echo "## 🚀 Features" >> $NOTES_FILE
+          echo "$COMMITS" | grep -iE "^- (feat|feature)" || echo "- No new features" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "## 🐛 Bug Fixes" >> $NOTES_FILE
+          echo "$COMMITS" | grep -iE "^- (fix|bugfix)" || echo "- No bug fixes" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "## 📚 Documentation" >> $NOTES_FILE
+          echo "$COMMITS" | grep -iE "^- (docs|doc)" || echo "- No documentation changes" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "## 🔧 Other Changes" >> $NOTES_FILE
+          echo "$COMMITS" | grep -viE "^- (feat|feature|fix|bugfix|docs|doc)" || echo "- No other changes" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "## 🔗 Links" >> $NOTES_FILE
+          echo "- **Production:** https://october.circuit-x.com" >> $NOTES_FILE
+          echo "- **Health Check:** https://october.circuit-x.com/health" >> $NOTES_FILE
+          echo "- **Metrics:** https://october.circuit-x.com/metrics.json" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "## 📦 Docker Image" >> $NOTES_FILE
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          echo "- **Image Tag:** ${COMMIT_SHA}" >> $NOTES_FILE
+          echo "- **ECR Repository:** october-backend" >> $NOTES_FILE
+          echo "" >> $NOTES_FILE
+          
+          echo "---" >> $NOTES_FILE
+          echo "**Full Changelog:** https://github.com/${{ github.repository }}/compare/${LATEST_TAG}...${NEW_VERSION}" >> $NOTES_FILE
+          
+          # Output the notes
+          cat $NOTES_FILE
+          
+          # Set output for next step
+          echo "notes-file=$NOTES_FILE" >> $GITHUB_OUTPUT
+
+      - name: Create Git tag
+        run: |
+          NEW_VERSION="${{ steps.version-bump.outputs.new-version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
+          git push origin "$NEW_VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version-bump.outputs.new-version }}
+          name: Release ${{ steps.version-bump.outputs.new-version }}
+          body_path: ${{ steps.release-notes.outputs.notes-file }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false  # We're generating custom notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deployment summary
+        run: |
+          echo "Release ${{ steps.version-bump.outputs.new-version }} created successfully!"
+          echo "Production URL: https://october.circuit-x.com"
+          echo "View release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version-bump.outputs.new-version }}"
