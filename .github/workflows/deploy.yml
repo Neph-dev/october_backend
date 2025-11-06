@@ -270,6 +270,25 @@ jobs:
             echo "ECS cluster $CLUSTER already exists"
           fi
 
+      - name: Ensure ECS service-linked role exists
+        run: |
+          ROLE_NAME="AWSServiceRoleForECS"
+          if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "Creating ECS service-linked role: $ROLE_NAME"
+            aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com >/dev/null 2>&1 || true
+            # Wait briefly for IAM role propagation
+            for i in {1..10}; do
+              if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+                echo "Service-linked role is now available."
+                break
+              fi
+              echo "Waiting for service-linked role propagation... ($i)"
+              sleep 3
+            done
+          else
+            echo "ECS service-linked role $ROLE_NAME already exists"
+          fi
+
       - name: Create or update ECS service
         env:
           TASK_DEF_ARN: ${{ steps.register.outputs.task-def-arn }}
