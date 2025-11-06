@@ -105,8 +105,8 @@ jobs:
           # Get only subnets where map-public-ip-on-launch=true (public subnets)
           SUBNET_IDS=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
-            --query 'Subnets[*].SubnetId' \
-            --output text | tr ' ' ',')
+            --query 'Subnets[].SubnetId' \
+            --output json | jq -r 'join(",")')
 
           echo "vpc-id=$VPC_ID" >> $GITHUB_OUTPUT
           echo "subnet-ids=$SUBNET_IDS" >> $GITHUB_OUTPUT
@@ -277,8 +277,9 @@ jobs:
 
           # Build a proper JSON network configuration to avoid CLI shorthand parsing issues
           # Convert comma-separated subnet IDs -> JSON array ["subnet-1","subnet-2",...]
-          SUBNETS_JSON=$(echo "$SUBNET_IDS" | tr ',' '\n' | jq -R . | jq -s .)
+          SUBNETS_JSON=$(printf "%s" "$SUBNET_IDS" | tr ',[:space:]' '\n' | sed '/^$/d' | jq -R . | jq -s .)
           NETWORK_JSON=$(jq -n --argjson subnets "$SUBNETS_JSON" --arg sg "$TASK_SG" '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"ENABLED"}}')
+          echo "Using network configuration: $NETWORK_JSON"
 
           if aws ecs describe-services --cluster $CLUSTER --services $SERVICE --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
             echo "Updating existing ECS service..."
