@@ -2,6 +2,8 @@
 
 ### Try it: https://october.circuit-x.com
 
+<img width="1721" height="957" alt="image" src="https://github.com/user-attachments/assets/d502d1d7-4639-47af-a8c5-d214afd74f21" />
+
 ### 🎥 [Watch the demo video](https://drive.proton.me/urls/RMB3TPKAWW#qua3g7VXghOJ)
 
 A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
