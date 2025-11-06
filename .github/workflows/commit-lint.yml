@@ -1,0 +1,237 @@
+name: Validate Commit Messages
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+      - 'hotfix/**'
+
+jobs:
+  validate-commits:
+    name: Validate Conventional Commits
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for commit validation
+
+      - name: Validate commit messages
+        run: |
+          # Colors for output
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[1;33m'
+          NC='\033[0m' # No Color
+          
+          echo "🔍 Validating commit messages against Conventional Commits specification..."
+          echo ""
+          
+          # Define valid commit types
+          VALID_TYPES="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+          
+          # Conventional commit regex pattern
+          # Format: type(scope)!: description
+          # - type: required (feat, fix, docs, etc.)
+          # - scope: optional
+          # - !: optional (indicates breaking change)
+          # - description: required
+          PATTERN="^(${VALID_TYPES})(\(.+\))?!?: .{1,100}"
+          
+          # Get commits to validate
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PRs, validate commits in the PR
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            COMMITS=$(git log --format="%H" ${BASE_SHA}..${HEAD_SHA})
+          else
+            # For direct pushes, validate the pushed commits
+            if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+              # New branch, validate last commit only
+              COMMITS=$(git log --format="%H" -1)
+            else
+              COMMITS=$(git log --format="%H" ${{ github.event.before }}..${{ github.event.after }})
+            fi
+          fi
+          
+          # Counters
+          TOTAL=0
+          VALID=0
+          INVALID=0
+          
+          # Validate each commit
+          while IFS= read -r commit; do
+            if [ -z "$commit" ]; then
+              continue
+            fi
+            
+            TOTAL=$((TOTAL + 1))
+            MSG=$(git log --format=%s -n 1 $commit)
+            AUTHOR=$(git log --format='%an' -n 1 $commit)
+            SHORT_SHA=$(git log --format=%h -n 1 $commit)
+            
+            echo "Checking commit ${SHORT_SHA}: ${MSG}"
+            
+            # Check if commit message matches pattern
+            if echo "$MSG" | grep -qE "$PATTERN"; then
+              echo -e "${GREEN}✓ Valid${NC}: $MSG"
+              VALID=$((VALID + 1))
+            else
+              echo -e "${RED}✗ Invalid${NC}: $MSG"
+              echo -e "  ${YELLOW}Author:${NC} $AUTHOR"
+              echo -e "  ${YELLOW}SHA:${NC} $SHORT_SHA"
+              
+              # Provide helpful feedback
+              if ! echo "$MSG" | grep -qE "^(${VALID_TYPES})"; then
+                echo -e "  ${RED}Issue:${NC} Missing or invalid type prefix"
+                echo -e "  ${YELLOW}Valid types:${NC} feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+              elif ! echo "$MSG" | grep -qE ": "; then
+                echo -e "  ${RED}Issue:${NC} Missing colon and space after type/scope"
+              elif [ ${#MSG} -lt 10 ]; then
+                echo -e "  ${RED}Issue:${NC} Description too short (minimum 10 characters)"
+              elif [ ${#MSG} -gt 100 ]; then
+                echo -e "  ${RED}Issue:${NC} Subject line too long (maximum 100 characters)"
+              fi
+              
+              echo -e "  ${YELLOW}Format:${NC} <type>(<scope>): <description>"
+              echo -e "  ${YELLOW}Example:${NC} feat(api): add user authentication endpoint"
+              echo ""
+              
+              INVALID=$((INVALID + 1))
+            fi
+            echo ""
+          done <<< "$COMMITS"
+          
+          # Summary
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Validation Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Total commits checked: $TOTAL"
+          echo -e "${GREEN}Valid commits: $VALID${NC}"
+          
+          if [ $INVALID -gt 0 ]; then
+            echo -e "${RED}Invalid commits: $INVALID${NC}"
+            echo ""
+            echo -e "${RED}❌ Commit message validation failed!${NC}"
+            echo ""
+            echo "Please follow the Conventional Commits specification:"
+            echo ""
+            echo "Format: <type>(<scope>): <description>"
+            echo ""
+            echo "Types:"
+            echo "  • feat:     A new feature"
+            echo "  • fix:      A bug fix"
+            echo "  • docs:     Documentation only changes"
+            echo "  • style:    Code style changes (formatting, missing semi-colons, etc)"
+            echo "  • refactor: Code change that neither fixes a bug nor adds a feature"
+            echo "  • perf:     Performance improvements"
+            echo "  • test:     Adding or updating tests"
+            echo "  • build:    Changes to build system or dependencies"
+            echo "  • ci:       Changes to CI configuration files and scripts"
+            echo "  • chore:    Other changes that don't modify src or test files"
+            echo "  • revert:   Reverts a previous commit"
+            echo ""
+            echo "Breaking changes:"
+            echo "  • Add '!' after type/scope: feat!: breaking change"
+            echo "  • Or include 'BREAKING CHANGE:' in commit body"
+            echo ""
+            echo "Examples:"
+            echo "  • feat: add user authentication"
+            echo "  • feat(api): add market data endpoint"
+            echo "  • fix: resolve memory leak in RSS processor"
+            echo "  • fix(auth): correct JWT token validation"
+            echo "  • docs: update API documentation"
+            echo "  • feat!: redesign API response format"
+            echo ""
+            echo "To fix invalid commits:"
+            echo "  git commit --amend -m 'type: your message'"
+            echo "  git push --force-with-lease"
+            echo ""
+            echo "Or for multiple commits:"
+            echo "  git rebase -i HEAD~N  # N = number of commits to edit"
+            echo ""
+            echo "For more information, visit:"
+            echo "  https://www.conventionalcommits.org/"
+            echo ""
+            exit 1
+          else
+            echo ""
+            echo -e "${GREEN}✅ All commit messages are valid!${NC}"
+            exit 0
+          fi
+
+      - name: Comment on PR (if validation fails)
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## ❌ Commit Message Validation Failed
+            
+            Some commits in this PR don't follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+            
+            ### Required Format
+            \`\`\`
+            <type>(<scope>): <description>
+            
+            [optional body]
+            
+            [optional footer(s)]
+            \`\`\`
+            
+            ### Valid Types
+            - **feat**: A new feature
+            - **fix**: A bug fix
+            - **docs**: Documentation only changes
+            - **style**: Code style changes (formatting, semicolons, etc.)
+            - **refactor**: Code change that neither fixes a bug nor adds a feature
+            - **perf**: Performance improvements
+            - **test**: Adding or updating tests
+            - **build**: Changes to build system or dependencies
+            - **ci**: Changes to CI configuration
+            - **chore**: Other changes that don't modify src or test files
+            - **revert**: Reverts a previous commit
+            
+            ### Examples
+            ✅ Good:
+            - \`feat: add user authentication\`
+            - \`feat(api): add market data endpoint\`
+            - \`fix: resolve memory leak in RSS processor\`
+            - \`docs: update deployment guide\`
+            - \`feat!: redesign API response format\` (breaking change)
+            
+            ❌ Bad:
+            - \`Added new feature\`
+            - \`fixed bug\`
+            - \`Update README\`
+            - \`WIP\`
+            
+            ### How to Fix
+            
+            **For the last commit:**
+            \`\`\`bash
+            git commit --amend -m "feat: your descriptive message"
+            git push --force-with-lease
+            \`\`\`
+            
+            **For multiple commits:**
+            \`\`\`bash
+            git rebase -i HEAD~N  # N = number of commits to edit
+            # Change 'pick' to 'reword' for commits to fix
+            # Save and update commit messages
+            git push --force-with-lease
+            \`\`\`
+            
+            Please update your commit messages and push again.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

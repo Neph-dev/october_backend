@@ -8,6 +8,7 @@
 
 ### 📚 Documentation
 - [Quick Start Guide](QUICKSTART.md) - Development workflow and commit conventions
+- [Contributing Guide](CONTRIBUTING.md) - Conventional commits specification and examples
 - [AWS Deployment Guide](DEPLOYMENT.md) - Complete AWS setup and deployment
 - [Release Management Guide](RELEASES.md) - Automated releases and versioning
 
@@ -108,9 +109,23 @@ This application follows NASA's coding standards for critical systems:
    # FINNHUB_API_KEY=your_finnhub_api_key_here
    ```
 
-4. Start MongoDB (using Docker):
+4. **Set up conventional commit rules** (recommended):
+   ```bash
+   ./scripts/setup-commit-rules.sh
+   ```
+   This configures your local git to use commit message templates and validation.
+
+5. Start MongoDB (using Docker):
    ```bash
    docker run -d --name mongodb -p 27017:27017 mongo:latest
+   ```
+
+6. Build and run:
+   ```bash
+   make build
+   make seed-data  # Seed initial company data
+   make run
+   ```
    ```
 
 5. Build and run:
@@ -749,6 +764,14 @@ For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 The repository includes automated GitHub Actions workflows:
 
+#### Commit Validation Workflow
+- **Trigger**: Push to any branch or Pull Request
+- **Actions**: 
+  - Validates all commit messages follow Conventional Commits specification
+  - Provides detailed feedback on invalid messages
+  - Posts PR comments with examples and fix instructions
+- **File**: `.github/workflows/commit-lint.yml`
+
 #### Deployment Workflow
 - **Trigger**: Push to `main` branch
 - **Actions**: 
@@ -764,6 +787,7 @@ The repository includes automated GitHub Actions workflows:
   - Creates Git tag
   - Generates release notes with categorized changes
   - Creates GitHub release with production links
+- **File**: `.github/workflows/release.yml`
 - **File**: `.github/workflows/release.yml`
 
 **Commit Message Conventions** for version bumping:

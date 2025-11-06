@@ -93,23 +93,23 @@ jobs:
           fi
           
           # Categorize commits
-          echo "## 🚀 Features" >> $NOTES_FILE
+          echo "## Features" >> $NOTES_FILE
           echo "$COMMITS" | grep -iE "^- (feat|feature)" || echo "- No new features" >> $NOTES_FILE
           echo "" >> $NOTES_FILE
           
-          echo "## 🐛 Bug Fixes" >> $NOTES_FILE
+          echo "## Bug Fixes" >> $NOTES_FILE
           echo "$COMMITS" | grep -iE "^- (fix|bugfix)" || echo "- No bug fixes" >> $NOTES_FILE
           echo "" >> $NOTES_FILE
           
-          echo "## 📚 Documentation" >> $NOTES_FILE
+          echo "## Documentation" >> $NOTES_FILE
           echo "$COMMITS" | grep -iE "^- (docs|doc)" || echo "- No documentation changes" >> $NOTES_FILE
           echo "" >> $NOTES_FILE
           
-          echo "## 🔧 Other Changes" >> $NOTES_FILE
+          echo "## Other Changes" >> $NOTES_FILE
           echo "$COMMITS" | grep -viE "^- (feat|feature|fix|bugfix|docs|doc)" || echo "- No other changes" >> $NOTES_FILE
           echo "" >> $NOTES_FILE
           
-          echo "## 🔗 Links" >> $NOTES_FILE
+          echo "## Links" >> $NOTES_FILE
           echo "- **Production:** https://october.circuit-x.com" >> $NOTES_FILE
           echo "- **Health Check:** https://october.circuit-x.com/health" >> $NOTES_FILE
           echo "- **Metrics:** https://october.circuit-x.com/metrics.json" >> $NOTES_FILE
