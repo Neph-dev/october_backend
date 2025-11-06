@@ -259,6 +259,17 @@ jobs:
           echo "alb-dns=$ALB_DNS" >> $GITHUB_OUTPUT
           echo "ALB DNS: $ALB_DNS"
 
+      - name: Ensure ECS cluster exists
+        run: |
+          CLUSTER=${ECS_CLUSTER}
+          STATUS=$(aws ecs describe-clusters --clusters "$CLUSTER" --query 'clusters[0].status' --output text 2>/dev/null || true)
+          if [ "$STATUS" != "ACTIVE" ]; then
+            echo "Creating ECS cluster $CLUSTER"
+            aws ecs create-cluster --cluster-name "$CLUSTER" >/dev/null
+          else
+            echo "ECS cluster $CLUSTER already exists"
+          fi
+
       - name: Create or update ECS service
         env:
           TASK_DEF_ARN: ${{ steps.register.outputs.task-def-arn }}
