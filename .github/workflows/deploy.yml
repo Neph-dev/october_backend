@@ -10,6 +10,8 @@ env:
   ECS_CLUSTER: october-cluster
   ECS_SERVICE: october-backend-service
   ECS_TASK_DEFINITION: aws/ecs-task-definition.json
+  CUSTOM_DOMAIN: oct.circuit-x.com
+  HOSTED_ZONE_NAME: circuit-x.com
 
 jobs:
   deploy:
@@ -383,4 +385,130 @@ jobs:
 
       - name: Output ALB DNS
         run: echo "Backend URL; http://${{ steps.alb.outputs.alb-dns }}/health"
+
+  domain:
+    name: Configure custom domain (Route53 + ACM + HTTPS)
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Resolve ALB info
+        id: alb
+        run: |
+          set -e
+          ALB_ARN=$(aws elbv2 describe-load-balancers \
+            --names october-alb \
+            --query 'LoadBalancers[0].LoadBalancerArn' \
+            --output text)
+          ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text)
+          ALB_ZONE_ID=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].CanonicalHostedZoneId' --output text)
+          TG_ARN=$(aws elbv2 describe-target-groups --names october-backend-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
+
+          echo "alb-arn=$ALB_ARN" >> $GITHUB_OUTPUT
+          echo "alb-dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "alb-zone-id=$ALB_ZONE_ID" >> $GITHUB_OUTPUT
+          echo "tg-arn=$TG_ARN" >> $GITHUB_OUTPUT
+          echo "ALB: $ALB_ARN | DNS: $ALB_DNS | ZoneId: $ALB_ZONE_ID | TG: $TG_ARN"
+
+      - name: Ensure Route53 hosted zone exists
+        id: zone
+        run: |
+          set -e
+          HOSTED_ZONE_NAME=${HOSTED_ZONE_NAME%\.}
+          ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "$HOSTED_ZONE_NAME" --query 'HostedZones[0].Id' --output text)
+          if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "None" ]; then
+            echo "Hosted zone $HOSTED_ZONE_NAME not found in Route53."
+            echo "If your DNS is external, create the CNAME/ALIAS there to point $CUSTOM_DOMAIN to ${{ steps.alb.outputs.alb-dns }}."
+            exit 1
+          fi
+          ZONE_ID=${ZONE_ID#/hostedzone/}
+          echo "zone-id=$ZONE_ID" >> $GITHUB_OUTPUT
+          echo "Using hosted zone: $HOSTED_ZONE_NAME ($ZONE_ID)"
+
+      - name: Ensure ACM certificate for custom domain
+        id: cert
+        run: |
+          set -e
+          DOMAIN="$CUSTOM_DOMAIN"
+          CERT_ARN=$(aws acm list-certificates --certificate-statuses ISSUED PENDING_VALIDATION INACTIVE \
+            --query "CertificateSummaryList[?DomainName=='${DOMAIN}'].CertificateArn | [0]" --output text)
+          if [ -z "$CERT_ARN" ] || [ "$CERT_ARN" = "None" ]; then
+            echo "Requesting new ACM certificate for $DOMAIN"
+            CERT_ARN=$(aws acm request-certificate --domain-name "$DOMAIN" --validation-method DNS --query 'CertificateArn' --output text)
+          else
+            echo "Reusing certificate: $CERT_ARN"
+          fi
+
+          # Create/ensure DNS validation record
+          RR_NAME=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text)
+          RR_TYPE=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Type' --output text)
+          RR_VALUE=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' --output text)
+
+          CHANGE_BATCH=$(jq -n --arg name "$RR_NAME" --arg type "$RR_TYPE" --arg value "$RR_VALUE" '{
+            Comment: "ACM DNS validation record",
+            Changes: [
+              {Action:"UPSERT", ResourceRecordSet:{Name:$name, Type:$type, TTL:300, ResourceRecords:[{Value:$value}]}}
+            ]
+          }')
+          aws route53 change-resource-record-sets --hosted-zone-id ${{ steps.zone.outputs.zone-id }} --change-batch "$CHANGE_BATCH" >/dev/null
+          echo "Created/updated validation record $RR_NAME"
+
+          # Wait for certificate issuance (best-effort loop)
+          echo "Waiting for ACM certificate to be ISSUED..."
+          for i in {1..20}; do
+            STATUS=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --query 'Certificate.Status' --output text)
+            echo "Attempt $i: status=$STATUS"
+            if [ "$STATUS" = "ISSUED" ]; then
+              break
+            fi
+            sleep 30
+          done
+
+          FINAL_STATUS=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --query 'Certificate.Status' --output text)
+          if [ "$FINAL_STATUS" != "ISSUED" ]; then
+            echo "Warning: Certificate not yet ISSUED (status=$FINAL_STATUS). Continuing to set up HTTPS listener; ALB may not serve HTTPS until issued."
+          fi
+          echo "cert-arn=$CERT_ARN" >> $GITHUB_OUTPUT
+
+      - name: Ensure HTTPS listener on ALB
+        run: |
+          set -e
+          ALB_ARN="${{ steps.alb.outputs.alb-arn }}"
+          TG_ARN="${{ steps.alb.outputs.tg-arn }}"
+          CERT_ARN="${{ steps.cert.outputs.cert-arn }}"
+          # Check if listener on 443 exists
+          EXISTING=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --query "Listeners[?Port==\`443\`].ListenerArn" --output text 2>/dev/null || true)
+          if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+            echo "Creating HTTPS listener on 443"
+            aws elbv2 create-listener \
+              --load-balancer-arn "$ALB_ARN" \
+              --protocol HTTPS \
+              --port 443 \
+              --certificates CertificateArn="$CERT_ARN" \
+              --default-actions Type=forward,TargetGroupArn="$TG_ARN"
+          else
+            echo "HTTPS listener already exists: $EXISTING"
+          fi
+
+      - name: Create/Update Route53 ALIAS record for custom domain
+        run: |
+          set -e
+          HOSTED_ZONE_ID="${{ steps.zone.outputs.zone-id }}"
+          ALB_DNS="${{ steps.alb.outputs.alb-dns }}"
+          ALB_ZONE_ID="${{ steps.alb.outputs.alb-zone-id }}"
+          NAME="$CUSTOM_DOMAIN"
+          CHANGE_BATCH=$(jq -n --arg name "$NAME" --arg albDns "$ALB_DNS" --arg albZone "$ALB_ZONE_ID" '{
+            Comment: "Point custom domain to ALB",
+            Changes: [
+              {Action:"UPSERT", ResourceRecordSet:{Name:$name, Type:"A", AliasTarget:{HostedZoneId:$albZone, DNSName:$albDns, EvaluateTargetHealth:false}}}
+            ]
+          }')
+          aws route53 change-resource-record-sets --hosted-zone-id "$HOSTED_ZONE_ID" --change-batch "$CHANGE_BATCH"
+          echo "✅ Created/updated alias: $NAME -> $ALB_DNS"
   
