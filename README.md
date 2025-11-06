@@ -1,10 +1,12 @@
 # October Backend
 
-### Try it: https://october.circuit-x.com
+### Try it on the Octob3r platform: https://october.circuit-x.com
 
 <img width="1721" height="957" alt="image" src="https://github.com/user-attachments/assets/d502d1d7-4639-47af-a8c5-d214afd74f21" />
 
 ### 🎥 [Watch the demo video](https://drive.proton.me/urls/RMB3TPKAWW#qua3g7VXghOJ)
+
+### 📚 [AWS Deployment Guide](DEPLOYMENT.md)
 
 A robust Go server built following NASA's "Power of 10" rules for clean and safe code, featuring MongoDB integration, company data management, and rate-limited APIs.
 
@@ -30,9 +32,11 @@ This application follows NASA's coding standards for critical systems:
 - **Structured Logging**: JSON-formatted logs with context
 - **Configuration Management**: Environment-based configuration with validation
 - **Error Handling**: Comprehensive error handling and recovery
-- **Health Checks**: Built-in health monitoring endpoints
-- **Middleware**: Request logging, recovery, and security middleware
+- **Health Checks**: Multiple monitoring endpoints (`/health`, `/liveness`, `/readiness`)
+- **Metrics Collection**: Prometheus-style metrics with JSON export
+- **Middleware**: Request logging, recovery, metrics tracking, and security middleware
 - **Timeouts**: Proper timeout handling for all operations
+- **AWS Deployment**: Production deployment on ECS Fargate with ALB and custom domain
 
 ### Database Integration
 - **MongoDB Support**: Full MongoDB integration with connection pooling
@@ -50,16 +54,22 @@ This application follows NASA's coding standards for critical systems:
 - **Pagination**: Efficient pagination for large datasets
 
 ### API Features
-- **Rate Limiting**: Token bucket algorithm with per-IP tracking
+- **Rate Limiting**: Token bucket algorithm with per-IP tracking (10 req/s, burst 20)
 - **RESTful Endpoints**: Clean REST API design
 - **Error Responses**: Consistent error response format
 - **Request Logging**: Detailed request/response logging
+- **Market Data Integration**: Real-time stock quotes via Finnhub API
+- **CORS Support**: Cross-origin resource sharing enabled
+- **Metrics Export**: Prometheus-compatible metrics in text and JSON formats
 
 ### AI/RAG Features
 - **Natural Language Queries**: Ask questions in plain English about companies
 - **OpenAI Integration**: Powered by GPT-4o-mini for cost-effective AI responses
 - **Retrieval-Augmented Generation**: Responses backed by real news articles
-- **Web Search Integration**: Automatic internet search for company-related topics when database context is insufficient
+- **Web Search Integration**: Google Custom Search for company-related topics when database context is insufficient
+- **Article Summarization**: AI-powered summarization of individual news articles
+- **Memory Caching**: In-memory cache for AI summaries to reduce API costs and improve performance
+- **Cache Statistics**: Monitor cache hit/miss rates and performance
 - **Company-Based Validation**: Web search allowed for ANY question about companies in our database
 - **Query Analysis**: Intelligent parsing of user intent and entities
 - **Source Attribution**: See which articles and web sources were used for each response
@@ -74,6 +84,8 @@ This application follows NASA's coding standards for critical systems:
 - Go 1.21 or later
 - MongoDB 4.4 or later
 - OpenAI API key (for AI/RAG features)
+- Google Custom Search API key and Engine ID (for web search)
+- Finnhub API key (for market data features)
 
 ### Installation
 
@@ -88,6 +100,9 @@ This application follows NASA's coding standards for critical systems:
    cp .env.example .env
    # Edit .env with your configuration, including:
    # OPENAI_API_KEY=your_openai_api_key_here
+   # CUSTOM_SEARCH_API_KEY=your_google_api_key_here
+   # CUSTOM_SEARCH_ENGINE_ID=your_search_engine_id_here
+   # FINNHUB_API_KEY=your_finnhub_api_key_here
    ```
 
 4. Start MongoDB (using Docker):
@@ -104,7 +119,61 @@ This application follows NASA's coding standards for critical systems:
 
 ## API Endpoints
 
+### Health & Monitoring
+
+#### Health Check
+```bash
+GET /health
+```
+Basic health check endpoint.
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/health
+```
+
+#### Liveness Probe
+```bash
+GET /liveness
+```
+Kubernetes-style liveness probe (minimal check).
+
+#### Readiness Probe
+```bash
+GET /readiness
+```
+Kubernetes-style readiness probe (checks dependencies).
+
+#### Metrics (Prometheus format)
+```bash
+GET /metrics
+```
+Prometheus-style metrics in text format.
+
+#### Metrics (JSON format)
+```bash
+GET /metrics.json
+```
+Detailed metrics in JSON format including request counts, latencies, and cache statistics.
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/metrics.json
+```
+
 ### Company API
+
+#### Get All Companies
+```bash
+GET /companies
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/companies
+```
 
 #### Get Company by Name
 ```bash
@@ -116,15 +185,10 @@ GET /company/{company-name}
 **Examples:**
 ```bash
 # Get Lockheed Martin
-curl http://localhost:8080/company/Lockheed%20Martin
+curl https://oct.circuit-x.com/company/Lockheed%20Martin
 
 # Get Raytheon Technologies  
-curl http://localhost:8080/company/Raytheon%20Technologies
-```
-
-#### Health Check
-```bash
-GET /health
+curl https://oct.circuit-x.com/company/Raytheon%20Technologies
 ```
 
 ### News API
@@ -148,13 +212,13 @@ GET /news
 **Examples:**
 ```bash
 # Get recent news for Lockheed Martin
-curl "http://localhost:8080/news?company=Lockheed%20Martin&limit=10"
+curl "https://oct.circuit-x.com/news?company=Lockheed%20Martin&limit=10"
 
 # Get positive news from last month
-curl "http://localhost:8080/news?sentiment=1&start_date=2024-09-23&end_date=2024-10-23"
+curl "https://oct.circuit-x.com/news?sentiment=1&start_date=2024-09-23&end_date=2024-10-23"
 
 # Get high relevance news with pagination
-curl "http://localhost:8080/news?min_relevance=0.8&limit=20&offset=40"
+curl "https://oct.circuit-x.com/news?min_relevance=0.8&limit=20&offset=40"
 ```
 
 #### Get Specific Article
@@ -164,7 +228,19 @@ GET /news/{id}
 
 **Example:**
 ```bash
-curl http://localhost:8080/news/507f1f77bcf86cd799439011
+curl https://oct.circuit-x.com/news/507f1f77bcf86cd799439011
+```
+
+#### Get News by Company
+```bash
+GET /news/company/{name}
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/news/company/Lockheed%20Martin
 ```
 
 ### AI/RAG API
@@ -187,17 +263,17 @@ POST /ai/query
 **Examples:**
 ```bash
 # Financial performance query
-curl -X POST http://localhost:8080/ai/query \
+curl -X POST https://oct.circuit-x.com/ai/query \
   -H "Content-Type: application/json" \
   -d '{"question": "How did RTX perform this quarter?"}'
 
 # Defense contracts query
-curl -X POST http://localhost:8080/ai/query \
+curl -X POST https://oct.circuit-x.com/ai/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What defense contracts did RTX recently win?"}'
 
 # Military developments query
-curl -X POST http://localhost:8080/ai/query \
+curl -X POST https://oct.circuit-x.com/ai/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What are the latest military training developments?", "company_context": ["US War Department"]}'
 ```
@@ -216,7 +292,7 @@ POST /ai/analyze
 
 **Example:**
 ```bash
-curl -X POST http://localhost:8080/ai/analyze \
+curl -X POST https://oct.circuit-x.com/ai/analyze \
   -H "Content-Type: application/json" \
   -d '{"question": "What were RTX earnings this quarter?"}'
 ```
@@ -236,21 +312,169 @@ POST /ai/web-search
 
 **Example:**
 ```bash
-curl -X POST http://localhost:8080/ai/web-search \
+curl -X POST https://oct.circuit-x.com/ai/web-search \
   -H "Content-Type: application/json" \
   -d '{"question": "Latest defense contracts for Raytheon", "companies": ["Raytheon Technologies"]}'
 ```
 
 **Note:** Web search is allowed for ANY question about companies that exist in our database. OpenAI's intelligence handles response appropriateness.
 
-#### Health Check
+#### Summarize Article
 ```bash
-GET /health
+GET /ai/summarise/{articleId}
 ```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+Generate an AI-powered summary of a specific news article. Results are cached in memory to reduce API costs.
 
 **Example:**
 ```bash
-curl http://localhost:8080/health
+curl https://oct.circuit-x.com/ai/summarise/507f1f77bcf86cd799439011
+```
+
+**Response:**
+```json
+{
+  "article_id": "507f1f77bcf86cd799439011",
+  "summary": "Lockheed Martin announced Q3 earnings showing...",
+  "key_points": [
+    "Revenue increased by 12%",
+    "New defense contract worth $2.5B",
+    "F-35 production ramping up"
+  ],
+  "sentiment": "positive",
+  "cached": false,
+  "generated_at": "2024-10-23T10:30:00Z"
+}
+```
+
+#### Cache Statistics
+```bash
+GET /ai/cache/stats
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+Get statistics about the AI summary cache performance.
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/ai/cache/stats
+```
+
+**Response:**
+```json
+{
+  "total_items": 145,
+  "hits": 892,
+  "misses": 145,
+  "hit_rate": 0.86,
+  "evictions": 12
+}
+```
+
+### Market Data API
+
+Real-time stock market data powered by Finnhub.
+
+#### Get Stock Quote
+```bash
+GET /market/quote/{ticker}
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Example:**
+```bash
+# Get Raytheon Technologies quote
+curl https://oct.circuit-x.com/market/quote/RTX
+```
+
+**Response:**
+```json
+{
+  "ticker": "RTX",
+  "current_price": 92.45,
+  "change": 1.23,
+  "percent_change": 1.35,
+  "high": 93.12,
+  "low": 91.87,
+  "open": 92.00,
+  "previous_close": 91.22,
+  "timestamp": "2024-10-23T16:00:00Z"
+}
+```
+
+#### Get Multiple Quotes
+```bash
+GET /market/quotes?tickers=RTX,LMT,NOC
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Query Parameters:**
+- `tickers`: Comma-separated list of ticker symbols
+
+**Example:**
+```bash
+curl "https://oct.circuit-x.com/market/quotes?tickers=RTX,LMT,NOC"
+```
+
+#### Get Available Tickers
+```bash
+GET /market/tickers
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+Returns all available tickers from companies in the database.
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/market/tickers
+```
+
+**Response:**
+```json
+{
+  "tickers": [
+    {
+      "ticker": "RTX",
+      "company": "Raytheon Technologies",
+      "industry": "Aerospace"
+    },
+    {
+      "ticker": "LMT",
+      "company": "Lockheed Martin",
+      "industry": "Defense"
+    }
+  ],
+  "count": 2
+}
+```
+
+#### Get Market Status
+```bash
+GET /market/status/{exchange}
+```
+
+**Rate Limited**: 10 requests/second, burst of 20
+
+**Example:**
+```bash
+curl https://oct.circuit-x.com/market/status/US
+```
+
+**Response:**
+```json
+{
+  "exchange": "US",
+  "is_open": true,
+  "status": "open",
+  "timezone": "America/New_York",
+  "current_time": "2024-10-23T14:30:00Z"
+}
 ```
 
 ### Pre-loaded Companies
@@ -271,7 +495,16 @@ The system includes two defense/aerospace companies:
 
 The application includes automated RSS feed processing to collect and store news articles:
 
-### Processing Commands
+### Automatic Background Refresh
+
+The server automatically processes RSS feeds every **2 hours** in the background. This happens:
+- Immediately on application startup
+- Every 2 hours thereafter
+- For all companies in the database
+
+No manual intervention needed for production deployments!
+
+### Manual Processing Commands
 
 ```bash
 # Seed company data first
@@ -297,16 +530,85 @@ make process-feed COMPANY="Lockheed Martin"
 
 ## Architecture
 
+### Project Structure
 ```
 cmd/
-├── api/main.go           # Application entry point
-└── seed/main.go          # Database seeding utility
-config/                   # Configuration management
-pkg/logger/               # Structured logging
+├── api/main.go              # Application entry point
+├── seed/main.go             # Database seeding utility
+└── feed-processor/main.go   # RSS feed processor
+config/                      # Configuration management
+pkg/
+├── logger/                  # Structured logging
+└── metrics/                 # Metrics collection
 internal/
-├── domain/company/       # Company business logic
-├── infra/database/       # Database implementations
-└── interfaces/http/      # HTTP handlers and middleware
+├── domain/
+│   ├── ai/                  # AI/RAG business logic
+│   ├── company/             # Company business logic
+│   ├── market/              # Market data business logic
+│   ├── news/                # News business logic
+│   └── shared/              # Shared domain models
+├── infra/
+│   ├── ai/                  # OpenAI integration
+│   ├── cache/               # In-memory caching
+│   ├── database/mongodb/    # MongoDB implementations
+│   ├── feed/                # RSS feed processing
+│   ├── market/              # Finnhub integration
+│   └── search/              # Google Custom Search
+└── interfaces/http/
+    ├── handlers/            # HTTP request handlers
+    ├── middleware/          # HTTP middleware (logging, metrics, rate limiting)
+    └── router.go            # Route definitions
+```
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Internet / Users                        │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+                            │ HTTPS (443) / HTTP (80)
+                            ▼
+              ┌─────────────────────────────┐
+              │   Route53 DNS               │
+              │   october.circuit-x.com     │
+              └──────────────┬──────────────┘
+                             │
+                             ▼
+              ┌─────────────────────────────┐
+              │  Application Load Balancer  │
+              │  (october-alb)              │
+              │  - Health checks            │
+              │  - SSL termination          │
+              └──────────────┬──────────────┘
+                             │
+                             ▼
+       ┌─────────────────────────────────────────┐
+       │     ECS Fargate (october-cluster)       │
+       │  ┌───────────────────────────────────┐  │
+       │  │  October Backend Container        │  │
+       │  │  - Go 1.21                        │  │
+       │  │  - Port 8080                      │  │
+       │  │  - Auto-scaling enabled           │  │
+       │  └───────────┬───────────────────────┘  │
+       └──────────────┼──────────────────────────┘
+                      │
+          ┌───────────┼───────────┐
+          │           │           │
+          ▼           ▼           ▼
+    ┌─────────┐ ┌─────────┐ ┌──────────┐
+    │ MongoDB │ │ OpenAI  │ │ Finnhub  │
+    │ Atlas   │ │   API   │ │   API    │
+    └─────────┘ └─────────┘ └──────────┘
+          │           │           │
+          │           │           └── Market Data
+          │           └────────────── AI/RAG
+          └────────────────────────── Data Storage
+
+    External Integrations:
+    - Google Custom Search API (Web search)
+    - CloudWatch Logs (Monitoring)
+    - SSM Parameter Store (Secrets)
 ```
 
 ## Running the Application
@@ -346,6 +648,15 @@ LOG_LEVEL=debug go run ./cmd/api
 
 # Run with custom port
 SERVER_PORT=9090 go run ./cmd/api
+
+# Run with live reload (requires air)
+make dev
+
+# Test all API endpoints (server must be running)
+make test-api
+
+# Test AI/RAG endpoints (server must be running)
+make test-ai
 ```
 
 ## Health Check
@@ -375,8 +686,14 @@ All configuration is handled through environment variables:
 | `SERVER_READ_TIMEOUT` | `15s` | HTTP read timeout |
 | `SERVER_WRITE_TIMEOUT` | `15s` | HTTP write timeout |
 | `SERVER_IDLE_TIMEOUT` | `60s` | HTTP idle timeout |
-| `DATABASE_URI` | `mongodb://localhost:27017/october` | Database connection string |
+| `DATABASE_URI` | `mongodb://localhost:27017/october` | MongoDB connection string |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `OPENAI_API_KEY` | - | OpenAI API key for AI/RAG features (required) |
+| `CUSTOM_SEARCH_API_KEY` | - | Google Custom Search API key (required) |
+| `CUSTOM_SEARCH_ENGINE_ID` | - | Google Custom Search Engine ID (required) |
+| `FINNHUB_API_KEY` | - | Finnhub API key for market data (required) |
+| `AWS_ACCESS_KEY_ID` | - | AWS access key (for deployment only) |
+| `AWS_SECRET_ACCESS_KEY` | - | AWS secret key (for deployment only) |
 
 ## Safety Features
 
@@ -411,7 +728,21 @@ All configuration is handled through environment variables:
 
 ## Production Deployment
 
-### Docker (Recommended)
+### AWS ECS Fargate (Recommended)
+
+The application is production-ready and deployed on AWS using:
+- **ECS Fargate**: Serverless container orchestration
+- **Application Load Balancer**: Traffic distribution and health checks
+- **Route53**: DNS management with custom domain
+- **ACM**: Free SSL/TLS certificates
+- **CloudWatch**: Centralized logging and monitoring
+- **SSM Parameter Store**: Secure secrets management
+
+**Production URL**: https://oct.circuit-x.com
+
+For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
+
+### Docker (Alternative)
 
 ```dockerfile
 FROM golang:1.21-alpine AS builder
@@ -424,6 +755,12 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY --from=builder /app/october-server .
 CMD ["./october-server"]
+```
+
+**Build and run:**
+```bash
+make docker-build
+make docker-run
 ```
 
 ### System Service
@@ -451,10 +788,35 @@ WantedBy=multi-user.target
 
 ## Monitoring
 
-The application exposes metrics and health endpoints:
+The application provides comprehensive monitoring capabilities:
 
-- Health: `GET /health`
-- Metrics: Available through structured logs
+### Health Endpoints
+- **Health**: `GET /health` - Basic health check
+- **Liveness**: `GET /liveness` - Kubernetes-style liveness probe
+- **Readiness**: `GET /readiness` - Kubernetes-style readiness probe
+
+### Metrics Endpoints
+- **Prometheus**: `GET /metrics` - Prometheus-compatible text format
+- **JSON Metrics**: `GET /metrics.json` - Detailed JSON metrics including:
+  - Request counts by endpoint and status code
+  - Request latencies (p50, p90, p95, p99)
+  - Active connections
+  - Uptime
+  - Memory usage
+  - Cache statistics (hits, misses, hit rate)
+  - API response times
+
+### Structured Logging
+- JSON-formatted logs with contextual information
+- Request/response logging with duration
+- Error tracking with stack traces
+- Configurable log levels (debug, info, warn, error)
+
+### Production Monitoring
+- **CloudWatch Logs**: Centralized log aggregation
+- **CloudWatch Metrics**: Custom metrics and alarms
+- **ALB Health Checks**: Continuous availability monitoring
+- **ECS Service Monitoring**: Container health and auto-recovery
 
 ## Security
 
