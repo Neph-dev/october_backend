@@ -4,8 +4,6 @@
 
 <img width="1721" height="957" alt="image" src="https://github.com/user-attachments/assets/d502d1d7-4639-47af-a8c5-d214afd74f21" />
 
-### 🎥 [Watch the demo video](https://drive.proton.me/urls/RMB3TPKAWW#qua3g7VXghOJ)
-
 ### 📚 Documentation
 - [Quick Start Guide](QUICKSTART.md) - Development workflow and commit conventions
 - [Contributing Guide](CONTRIBUTING.md) - Conventional commits specification and examples
