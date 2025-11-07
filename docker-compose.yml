@@ -12,6 +12,8 @@ services:
       - SERVER_WRITE_TIMEOUT=${SERVER_WRITE_TIMEOUT:-15s}
       - SERVER_IDLE_TIMEOUT=${SERVER_IDLE_TIMEOUT:-60s}
       - DATABASE_URI=mongodb://mongodb:27017/october
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CUSTOM_SEARCH_API_KEY=${CUSTOM_SEARCH_API_KEY}
@@ -63,8 +65,25 @@ services:
     profiles:
       - local-db
 
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333" # REST API
+      - "6334:6334" # gRPC API
+    environment:
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - october-network
+    restart: unless-stopped
+    profiles:
+      - local-db
+
 volumes:
   mongodb_data:
+  qdrant_data:
 
 networks:
   october-network:

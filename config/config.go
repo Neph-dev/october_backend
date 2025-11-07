@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
+	Qdrant   QdrantConfig
 	Logger   LoggerConfig
 	AI       AIConfig
 	Market   MarketConfig
@@ -31,6 +32,12 @@ type ServerConfig struct {
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
 	URI string
+}
+
+// QdrantConfig holds Qdrant vector database configuration
+type QdrantConfig struct {
+	URL    string
+	APIKey string
 }
 
 // LoggerConfig holds logger configuration
@@ -69,6 +76,10 @@ func Load() (*Config, error) {
 		Database: DatabaseConfig{
 			URI: getEnv("DATABASE_URI", "mongodb://localhost:27017/october"),
 		},
+		Qdrant: QdrantConfig{
+			URL:    getEnv("QDRANT_URL", "http://localhost:6333"),
+			APIKey: getEnv("QDRANT_API_KEY", ""),
+		},
 		Logger: LoggerConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
@@ -106,6 +117,10 @@ func (c *Config) validate() error {
 
 	if c.Database.URI == "" {
 		return fmt.Errorf("database URI cannot be empty")
+	}
+
+	if c.Qdrant.URL == "" {
+		return fmt.Errorf("qdrant URL cannot be empty")
 	}
 
 	validLogLevels := map[string]bool{
