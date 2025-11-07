@@ -58,60 +58,99 @@ func (s *OpenAIService) ProcessQuery(ctx context.Context, req *ai.QueryRequest) 
 		return nil, fmt.Errorf("%w: failed to retrieve articles", ai.ErrAIService)
 	}
 
-	// Step 3: If insufficient database context, use Google Custom Search + OpenAI
-	if len(sources) < 3 || s.hasLowConfidenceContext(sources) {
-		s.logger.Info("Insufficient database context, using Google Custom Search + OpenAI", "db_sources", len(sources))
-		
-		// Check if the question is about defense/aeronautics companies or topics
-		if s.isDefenseAeronauticsQuestion(req.Question, analysis.CompanyNames) {
-			// Perform Google Custom Search
-			searchResults, err := s.googleSearch.SearchDefenseAndAerospace(ctx, req.Question)
-			if err != nil {
-				s.logger.Error("Failed to perform Google search, falling back to direct OpenAI", "error", err)
-				// Fallback to direct OpenAI response
-				directResponse, directErr := s.generateDirectResponse(ctx, req.Question, analysis)
-				if directErr != nil {
-					s.logger.Error("Failed to generate direct response", "error", directErr)
-					return nil, fmt.Errorf("%w: failed to generate response", ai.ErrAIService)
+	// Step 3: If low confidence, try web search
+	if s.hasLowConfidenceContext(sources) {
+		s.logger.Info("Low confidence in database context, attempting web search")
+
+		// Perform web search for additional context
+		// We allow broader queries and filter based on search results
+		searchResults, err := s.googleSearch.SearchDefenseAndAerospace(ctx, req.Question)
+		if err != nil {
+			s.logger.Warn("Web search failed", "error", err)
+			// If search fails but it might be defense-related, try direct response
+			if s.isDefenseAeronauticsQuestion(req.Question, analysis.CompanyNames) {
+				directResponse, err := s.generateDirectResponse(ctx, req.Question, analysis)
+				if err == nil && directResponse != "" {
+					// Check if the response is the restriction message
+					if strings.Contains(directResponse, "I can only provide information about defense and aerospace companies") {
+						return &ai.QueryResponse{
+							Answer:              directResponse,
+							Sources:             []ai.SourceReference{},
+							WebSources:          []ai.WebSearchSource{},
+							UsedWebSearch:       false,
+							Confidence:          0.0,
+							ProcessingTime:      time.Since(startTime),
+							CompaniesReferenced: []string{},
+						}, nil
+					}
+					return &ai.QueryResponse{
+						Answer:              directResponse,
+						Sources:             sources,
+						WebSources:          []ai.WebSearchSource{},
+						UsedWebSearch:       false,
+						Confidence:          0.5,
+						ProcessingTime:      time.Since(startTime),
+						CompaniesReferenced: analysis.CompanyNames,
+					}, nil
 				}
+			}
+		}
 
-				return &ai.QueryResponse{
-					Answer:              directResponse,
-					Sources:             []ai.SourceReference{},
-					WebSources:          []ai.WebSearchSource{},
-					UsedWebSearch:       false,
-					Confidence:          0.7,
-					ProcessingTime:      time.Since(startTime),
-					CompaniesReferenced: analysis.CompanyNames,
-				}, nil
+		// Convert web search results to our format
+		webSources := make([]ai.WebSearchSource, len(searchResults))
+		for i, result := range searchResults {
+			// Extract source domain from URL
+			source := result.Link
+			if strings.Contains(result.Link, "://") {
+				parts := strings.Split(result.Link, "://")
+				if len(parts) > 1 {
+					domainParts := strings.Split(parts[1], "/")
+					if len(domainParts) > 0 {
+						source = domainParts[0]
+					}
+				}
 			}
 
-			// Generate response using Google search results
-			webSources := s.convertGoogleResultsToWebSources(searchResults)
-			searchResponse, err := s.generateResponseWithWebSearch(ctx, req.Question, searchResults, analysis)
-			if err != nil {
-				s.logger.Error("Failed to generate response with search results", "error", err)
-				return nil, fmt.Errorf("%w: failed to generate search-based response", ai.ErrAIService)
+			webSources[i] = ai.WebSearchSource{
+				Title:   result.Title,
+				URL:     result.Link,
+				Snippet: result.Snippet,
+				Source:  source,
 			}
+		}
 
-			result := &ai.QueryResponse{
-				Answer:              searchResponse,
-				Sources:             []ai.SourceReference{},
-				WebSources:          webSources,
-				UsedWebSearch:       true,
-				Confidence:          0.8, // High confidence for search + AI combination
-				ProcessingTime:      time.Since(startTime),
-				CompaniesReferenced: analysis.CompanyNames,
+		// Check if we have relevant search results
+		if len(webSources) == 0 {
+			// No search results found, check if question is defense-related
+			if s.isDefenseAeronauticsQuestion(req.Question, analysis.CompanyNames) {
+				// Try generating a direct response from OpenAI's knowledge
+				directResponse, err := s.generateDirectResponse(ctx, req.Question, analysis)
+				if err == nil && directResponse != "" {
+					// Check if the response is the restriction message
+					if strings.Contains(directResponse, "I can only provide information about defense and aerospace companies") {
+						return &ai.QueryResponse{
+							Answer:              directResponse,
+							Sources:             []ai.SourceReference{},
+							WebSources:          []ai.WebSearchSource{},
+							UsedWebSearch:       false,
+							Confidence:          0.0,
+							ProcessingTime:      time.Since(startTime),
+							CompaniesReferenced: []string{},
+						}, nil
+					}
+					return &ai.QueryResponse{
+						Answer:              directResponse,
+						Sources:             sources,
+						WebSources:          []ai.WebSearchSource{},
+						UsedWebSearch:       false,
+						Confidence:          0.5,
+						ProcessingTime:      time.Since(startTime),
+						CompaniesReferenced: analysis.CompanyNames,
+					}, nil
+				}
 			}
-
-			s.logger.Info("Google search + OpenAI response provided", 
-				"processing_time", result.ProcessingTime,
-				"search_results", len(searchResults),
-				"confidence", result.Confidence)
-
-			return result, nil
-		} else {
-			// Not a defense/aeronautics question, return no results
+			
+			// Not defense-related or couldn't generate response
 			return &ai.QueryResponse{
 				Answer:              "I can only provide information about defense and aeronautics companies and topics. Please ask about RTX, US War Department, or related defense/aerospace subjects.",
 				Sources:             []ai.SourceReference{},
@@ -119,12 +158,48 @@ func (s *OpenAIService) ProcessQuery(ctx context.Context, req *ai.QueryRequest) 
 				UsedWebSearch:       false,
 				Confidence:          0.0,
 				ProcessingTime:      time.Since(startTime),
-				CompaniesReferenced: analysis.CompanyNames,
+				CompaniesReferenced: []string{},
 			}, nil
 		}
-	}
 
-	// Step 4: Generate AI response using retrieved context from database
+		// Generate response with web search context
+		// OpenAI will evaluate if the results are relevant and appropriate
+		response, err := s.generateResponseWithWebSearch(ctx, req.Question, searchResults, analysis)
+		if err != nil {
+			s.logger.Error("Failed to generate response with web search", "error", err)
+			return nil, fmt.Errorf("%w: failed to generate response", ai.ErrAIService)
+		}
+
+		// Check if the response is the restriction message
+		if strings.Contains(response, "I can only provide information about defense and aerospace companies") {
+			return &ai.QueryResponse{
+				Answer:              response,
+				Sources:             []ai.SourceReference{},
+				WebSources:          []ai.WebSearchSource{},
+				UsedWebSearch:       false,
+				Confidence:          0.0,
+				ProcessingTime:      time.Since(startTime),
+				CompaniesReferenced: []string{},
+			}, nil
+		}
+
+		result := &ai.QueryResponse{
+			Answer:              response,
+			Sources:             sources,
+			WebSources:          webSources,
+			UsedWebSearch:       true,
+			Confidence:          0.8, // High confidence for search + AI combination
+			ProcessingTime:      time.Since(startTime),
+			CompaniesReferenced: analysis.CompanyNames,
+		}
+
+		s.logger.Info("Google search + OpenAI response provided", 
+			"processing_time", result.ProcessingTime,
+			"search_results", len(searchResults),
+			"confidence", result.Confidence)
+
+		return result, nil
+	}	// Step 4: Generate AI response using retrieved context from database
 	response, err := s.generateResponse(ctx, req.Question, sources, []ai.WebSearchSource{}, analysis)
 	if err != nil {
 		s.logger.Error("Failed to generate AI response", "error", err)
@@ -552,15 +627,16 @@ func (s *OpenAIService) generateDirectResponse(ctx context.Context, question str
 	systemPrompt := `You are a concise defense and aerospace industry analyst. Answer questions directly and briefly.
 
 Guidelines:
-- Only answer questions about defense and aerospace companies or topics
+- Answer questions about defense and aerospace companies, their executives, history, operations, and related topics
 - Focus on companies like RTX (Raytheon Technologies), Lockheed Martin, Boeing, Northrop Grumman, etc.
+- Include information about company leadership, executives, founders, and key personnel when relevant
 - Give short, direct answers (1-2 sentences maximum)
 - Provide only the most essential information requested
 - No lengthy explanations or background context
 - If you don't have current information, briefly mention your knowledge may be outdated
-- If the question is not about defense/aerospace, politely decline to answer
+- If the question is not about defense/aerospace companies or their related topics, politely decline to answer
 
-Important: Keep responses short, direct, and to the point. Only provide information about defense and aerospace companies and related topics. Give longer answers only if specifically requested. such as "explain in detail" or "provide a comprehensive overview".`
+Important: Keep responses short, direct, and to the point. Be flexible - questions about people associated with defense/aerospace companies (like CEOs, executives, founders) are valid. Give longer answers only if specifically requested such as "explain in detail" or "provide a comprehensive overview".`
 
 	resp, err := s.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model: s.model,
@@ -590,21 +666,6 @@ Important: Keep responses short, direct, and to the point. Only provide informat
 }
 
 // convertGoogleResultsToWebSources converts Google search results to WebSearchSource format
-func (s *OpenAIService) convertGoogleResultsToWebSources(results []search.GoogleSearchResult) []ai.WebSearchSource {
-	webSources := make([]ai.WebSearchSource, 0, len(results))
-	
-	for _, result := range results {
-		webSource := ai.WebSearchSource{
-			Title:   result.Title,
-			URL:     result.Link,
-			Snippet: result.Snippet,
-		}
-		webSources = append(webSources, webSource)
-	}
-	
-	return webSources
-}
-
 // generateResponseWithWebSearch generates a response using Google search results and OpenAI
 func (s *OpenAIService) generateResponseWithWebSearch(ctx context.Context, question string, searchResults []search.GoogleSearchResult, analysis *ai.QueryAnalysisResult) (string, error) {
 	// Build context from search results
@@ -617,18 +678,22 @@ func (s *OpenAIService) generateResponseWithWebSearch(ctx context.Context, quest
 		contextBuilder.WriteString(fmt.Sprintf("   Content: %s\n\n", result.Snippet))
 	}
 	
-	systemPrompt := `You are a research assistant. Use the provided search results context to answer accurately. 
+	systemPrompt := `You are a research assistant specializing in defense and aerospace industries. Analyze the search results and determine if they contain relevant information to answer the question.
 
 Guidelines:
-- Only answer questions about defense and aerospace companies or topics
+- Evaluate whether the search results are related to defense, aerospace, or related companies
+- If the results are about executives, founders, leaders, or personnel of defense/aerospace companies, answer the question
+- If the results are about contracts, financials, products, or operations of defense/aerospace companies, answer the question
 - Use the search results provided as your primary source of information
 - Keep responses short, direct, and to the point (1-2 sentences maximum)
 - Provide only the most essential information requested
 - Give longer answers only if specifically requested such as "explain in detail" or "provide a comprehensive overview"
-- If the search results don't contain relevant information, say so briefly
-- Always stay focused on defense and aerospace topics only
+- If the search results don't contain information relevant to defense/aerospace topics, politely decline with: "I can only provide information about defense and aerospace companies and related topics."
 
-Important: Base your answer on the provided search results. Keep responses concise unless detailed explanation is specifically requested.`
+Important: 
+- Be flexible in determining relevance - executives, personnel, history, and other aspects of defense/aerospace companies are valid topics
+- Base your answer on the provided search results
+- Keep responses concise unless detailed explanation is specifically requested`
 
 	userPrompt := fmt.Sprintf("Question: %s\n\n%s", question, contextBuilder.String())
 
