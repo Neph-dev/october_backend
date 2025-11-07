@@ -71,8 +71,8 @@ services:
     ports:
       - "6333:6333" # REST API
       - "6334:6334" # gRPC API
-    environment:
-      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+    # environment:
+    #   - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}  # Commented out for local development
     volumes:
       - qdrant_data:/qdrant/storage
     networks:

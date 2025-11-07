@@ -11,9 +11,12 @@ import (
 	"github.com/Neph-dev/october_backend/config"
 	"github.com/Neph-dev/october_backend/internal/domain/company"
 	"github.com/Neph-dev/october_backend/internal/domain/news"
+	aiInfra "github.com/Neph-dev/october_backend/internal/infra/ai"
 	"github.com/Neph-dev/october_backend/internal/infra/database/mongodb"
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
+	"github.com/Neph-dev/october_backend/internal/infra/vector"
 	"github.com/Neph-dev/october_backend/pkg/logger"
+	"github.com/sashabaranov/go-openai"
 )
 
 func main() {
@@ -51,8 +54,19 @@ func main() {
 	companyRepo := mongodb.NewCompanyRepository(dbClient.Database(), appLogger)
 	newsRepo := mongodb.NewNewsRepository(dbClient.Database())
 
+	// Initialize OpenAI client for embedding service
+	openaiClient := openai.NewClient(cfg.AI.OpenAIAPIKey)
+	embeddingService := aiInfra.NewEmbeddingService(openaiClient, appLogger)
+
+	// Initialize Qdrant vector repository (optional - will log warning if fails)
+	qdrantRepo, err := vector.NewQdrantRepository(cfg.Qdrant.URL, cfg.Qdrant.APIKey, appLogger)
+	if err != nil {
+		appLogger.Warn("Failed to initialize Qdrant repository, continuing without vector search", "error", err)
+		qdrantRepo = nil
+	}
+
 	companyService := company.NewCompanyService(companyRepo, appLogger)
-	newsService := news.NewService(newsRepo, appLogger.Unwrap())
+	newsService := news.NewService(newsRepo, qdrantRepo, embeddingService, appLogger.Unwrap())
 	rssService := feed.NewRSSService(appLogger.Unwrap())
 	webScraperService := feed.NewWebScraperService(appLogger.Unwrap())
 	processorService := feed.NewProcessorService(rssService, webScraperService, newsService, companyService, appLogger.Unwrap())

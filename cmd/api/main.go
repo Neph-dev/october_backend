@@ -22,6 +22,7 @@ import (
 	"github.com/Neph-dev/october_backend/internal/infra/feed"
 	marketInfra "github.com/Neph-dev/october_backend/internal/infra/market"
 	"github.com/Neph-dev/october_backend/internal/infra/search"
+	"github.com/Neph-dev/october_backend/internal/infra/vector"
 	httpHandler "github.com/Neph-dev/october_backend/internal/interfaces/http"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 	"github.com/Neph-dev/october_backend/pkg/metrics"
@@ -121,9 +122,36 @@ func (app *Application) initialize() error {
 	companyRepo := mongodb.NewCompanyRepository(app.dbClient.Database(), app.logger)
 	newsRepo := mongodb.NewNewsRepository(app.dbClient.Database())
 
+	// Initialize OpenAI client (shared by embedding and AI services)
+	openaiClient := openai.NewClient(app.config.AI.OpenAIAPIKey)
+
+	// Initialize embedding service
+	embeddingService := aiInfra.NewEmbeddingService(openaiClient, app.logger)
+
+	// Initialize Qdrant vector repository
+	qdrantRepo, err := vector.NewQdrantRepository(
+		app.config.Qdrant.URL,
+		app.config.Qdrant.APIKey,
+		app.logger,
+	)
+	if err != nil {
+		app.logger.Warn("Failed to initialize Qdrant repository", "error", err)
+		// Continue without vector search - use nil repository
+		qdrantRepo = nil
+	} else {
+		// Ensure collection exists
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := qdrantRepo.EnsureCollection(ctx); err != nil {
+			app.logger.Warn("Failed to create Qdrant collection", "error", err)
+		} else {
+			app.logger.Info("Qdrant collection initialized successfully")
+		}
+	}
+
 	// Initialize services
 	app.companyService = company.NewCompanyService(companyRepo, app.logger)
-	app.newsService = news.NewService(newsRepo, app.logger.Unwrap())
+	app.newsService = news.NewService(newsRepo, qdrantRepo, embeddingService, app.logger.Unwrap())
 	app.rssService = feed.NewRSSService(app.logger.Unwrap())
 	webScraperService := feed.NewWebScraperService(app.logger.Unwrap())
 	app.processorService = feed.NewProcessorService(app.rssService, webScraperService, app.newsService, app.companyService, app.logger.Unwrap())
@@ -139,11 +167,12 @@ func (app *Application) initialize() error {
 	summaryCache := cache.NewMemoryCache()
 	
 	// Initialize AI service with Google Custom Search integration and caching
-	openaiClient := openai.NewClient(app.config.AI.OpenAIAPIKey)
 	app.aiService = aiInfra.NewOpenAIService(
 		openaiClient,
 		app.newsService,
 		googleSearchService,
+		embeddingService,
+		qdrantRepo,
 		summaryCache,
 		app.logger,
 	)

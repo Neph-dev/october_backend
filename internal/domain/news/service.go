@@ -8,17 +8,43 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// EmbeddingService interface for generating text embeddings
+type EmbeddingService interface {
+	EmbedArticle(ctx context.Context, title, summary, content string) ([]float32, error)
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
+// VectorRepository interface for vector database operations
+// VectorRepository handles vector database operations for semantic search
+type VectorRepository interface {
+	UpsertArticle(ctx context.Context, articleID string, vector []float32, metadata map[string]interface{}) error
+	DeleteArticle(ctx context.Context, articleID string) error
+	SearchArticles(ctx context.Context, queryVector []float32, limit uint64, companies []string, startDate, endDate *time.Time) ([]VectorSearchResult, error)
+}
+
+// VectorSearchResult represents a result from semantic search
+type VectorSearchResult struct {
+	ArticleID string
+	Score     float64
+	Company   string
+	Title     string
+}
+
 // Service handles business logic for news operations
 type Service struct {
-	repo   Repository
-	logger *slog.Logger
+	repo             Repository
+	vectorRepo       VectorRepository
+	embeddingService EmbeddingService
+	logger           *slog.Logger
 }
 
 // NewService creates a new news service
-func NewService(repo Repository, logger *slog.Logger) *Service {
+func NewService(repo Repository, vectorRepo VectorRepository, embeddingService EmbeddingService, logger *slog.Logger) *Service {
 	return &Service{
-		repo:   repo,
-		logger: logger,
+		repo:             repo,
+		vectorRepo:       vectorRepo,
+		embeddingService: embeddingService,
+		logger:           logger,
 	}
 }
 
@@ -48,9 +74,60 @@ func (s *Service) CreateArticle(ctx context.Context, article *Article) error {
 		article.ID = primitive.NewObjectID()
 	}
 
+	// Save to MongoDB first
 	if err := s.repo.Create(ctx, article); err != nil {
 		s.logger.Error("Failed to create article", "error", err, "title", article.Title)
 		return err
+	}
+
+	// Generate embedding and store in Qdrant (non-blocking, log errors but don't fail article creation)
+	// Only if vector services are available
+	if s.vectorRepo != nil && s.embeddingService != nil {
+		go func() {
+			vectorCtx := context.Background() // Use background context for async operation
+			
+			// Generate embedding
+			embedding, err := s.embeddingService.EmbedArticle(vectorCtx, article.Title, article.Summary, article.Content)
+			if err != nil {
+				s.logger.Error("Failed to generate embedding for article", 
+					"error", err, 
+					"articleID", article.ID.Hex(),
+					"title", article.Title)
+				return
+			}
+
+			// Prepare metadata for Qdrant (convert arrays to comma-separated strings)
+			companiesStr := ""
+			if len(article.Companies) > 0 {
+				companiesStr = article.Companies[0] // Primary company
+				if len(article.Companies) > 1 {
+					for _, comp := range article.Companies[1:] {
+						companiesStr += ", " + comp
+					}
+				}
+			}
+			
+			metadata := map[string]interface{}{
+				"article_id":       article.ID.Hex(),
+				"companies":        companiesStr,
+				"title":            article.Title,
+				"published_date":   article.PublishedDate.Format(time.RFC3339),
+				"relevance_score":  article.RelevanceScore,
+			}
+
+			// Store in Qdrant
+			if err := s.vectorRepo.UpsertArticle(vectorCtx, article.ID.Hex(), embedding, metadata); err != nil {
+				s.logger.Error("Failed to store article in vector database", 
+					"error", err, 
+					"articleID", article.ID.Hex(),
+					"title", article.Title)
+				return
+			}
+
+			s.logger.Info("Article vector stored successfully", 
+				"articleID", article.ID.Hex(), 
+				"embeddingDim", len(embedding))
+		}()
 	}
 
 	s.logger.Info("Article created successfully", "id", article.ID.Hex(), "title", article.Title)

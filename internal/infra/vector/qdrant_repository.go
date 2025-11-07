@@ -3,8 +3,10 @@ package vector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/Neph-dev/october_backend/internal/domain/news"
 	"github.com/Neph-dev/october_backend/pkg/logger"
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -34,8 +36,22 @@ type ArticleSearchResult struct {
 
 // NewQdrantRepository creates a new Qdrant repository
 func NewQdrantRepository(url, apiKey string, logger logger.Logger) (*QdrantRepository, error) {
+	// Parse URL to extract host (remove http:// or https://)
+	host := url
+	if strings.HasPrefix(url, "http://") {
+		host = strings.TrimPrefix(url, "http://")
+	} else if strings.HasPrefix(url, "https://") {
+		host = strings.TrimPrefix(url, "https://")
+	}
+	
+	// Remove port if present (we'll specify it separately)
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+
 	client, err := qdrant.NewClient(&qdrant.Config{
-		Host:   url,
+		Host:   host,
+		Port:   6334, // gRPC port
 		APIKey: apiKey,
 	})
 
@@ -227,6 +243,35 @@ func (r *QdrantRepository) DeleteArticle(ctx context.Context, articleID string) 
 	return nil
 }
 
+// Search provides a simplified interface for semantic search (implements news.VectorRepository)
+func (r *QdrantRepository) SearchArticles(ctx context.Context, queryVector []float32, limit uint64, companies []string, startDate, endDate *time.Time) ([]news.VectorSearchResult, error) {
+	// Build the filter
+	filter := &SearchFilter{
+		Companies: companies,
+		StartDate: startDate,
+		EndDate:   endDate,
+	}
+
+	// Use the existing Search method
+	results, err := r.Search(ctx, queryVector, limit, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert ArticleSearchResult to news.VectorSearchResult
+	searchResults := make([]news.VectorSearchResult, len(results))
+	for i, result := range results {
+		searchResults[i] = news.VectorSearchResult{
+			ArticleID: result.ArticleID,
+			Score:     float64(result.Score),
+			Company:   result.Company,
+			Title:     result.Title,
+		}
+	}
+
+	return searchResults, nil
+}
+
 // GetCollectionInfo returns information about the collection  
 func (r *QdrantRepository) GetCollectionInfo(ctx context.Context) (map[string]interface{}, error) {
 	// For now, return basic info - can be expanded later
@@ -256,22 +301,35 @@ type SearchFilter struct {
 func buildQdrantFilter(filter *SearchFilter) *qdrant.Filter {
 	var conditions []*qdrant.Condition
 
-	// Company filter
+	// Company filter - check if any of the filter companies appear in the companies field
 	if len(filter.Companies) > 0 {
-		conditions = append(conditions, &qdrant.Condition{
-			ConditionOneOf: &qdrant.Condition_Field{
-				Field: &qdrant.FieldCondition{
-					Key: "company",
-					Match: &qdrant.Match{
-						MatchValue: &qdrant.Match_Keywords{
-							Keywords: &qdrant.RepeatedStrings{
-								Strings: filter.Companies,
+		// Build OR conditions for each company
+		var companyConditions []*qdrant.Condition
+		for _, company := range filter.Companies {
+			companyConditions = append(companyConditions, &qdrant.Condition{
+				ConditionOneOf: &qdrant.Condition_Field{
+					Field: &qdrant.FieldCondition{
+						Key: "companies",
+						Match: &qdrant.Match{
+							MatchValue: &qdrant.Match_Text{
+								Text: company,
 							},
 						},
 					},
 				},
-			},
-		})
+			})
+		}
+		
+		// Wrap in Should (OR) condition if multiple companies
+		if len(companyConditions) > 0 {
+			conditions = append(conditions, &qdrant.Condition{
+				ConditionOneOf: &qdrant.Condition_Filter{
+					Filter: &qdrant.Filter{
+						Should: companyConditions,
+					},
+				},
+			})
+		}
 	}
 
 	// Date range filter

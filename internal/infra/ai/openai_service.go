@@ -15,23 +15,35 @@ import (
 )
 
 type OpenAIService struct {
-	client         *openai.Client
-	newsService    *news.Service
-	googleSearch   *search.GoogleSearchService
-	summaryCache   ai.SummaryCache
-	model          string
-	logger         logger.Logger
+	client           *openai.Client
+	newsService      *news.Service
+	googleSearch     *search.GoogleSearchService
+	embeddingService *EmbeddingService
+	vectorRepo       news.VectorRepository
+	summaryCache     ai.SummaryCache
+	model            string
+	logger           logger.Logger
 }
 
 // NewOpenAIService creates a new OpenAI service instance
-func NewOpenAIService(client *openai.Client, newsService *news.Service, googleSearch *search.GoogleSearchService, summaryCache ai.SummaryCache, logger logger.Logger) *OpenAIService {
+func NewOpenAIService(
+	client *openai.Client, 
+	newsService *news.Service, 
+	googleSearch *search.GoogleSearchService, 
+	embeddingService *EmbeddingService,
+	vectorRepo news.VectorRepository,
+	summaryCache ai.SummaryCache, 
+	logger logger.Logger,
+) *OpenAIService {
 	return &OpenAIService{
-		client:       client,
-		newsService:  newsService,
-		googleSearch: googleSearch,
-		summaryCache: summaryCache,
-		model:        openai.GPT4oMini, // Default model
-		logger:       logger,
+		client:           client,
+		newsService:      newsService,
+		googleSearch:     googleSearch,
+		embeddingService: embeddingService,
+		vectorRepo:       vectorRepo,
+		summaryCache:     summaryCache,
+		model:            openai.GPT4oMini, // Default model
+		logger:           logger,
 	}
 }
 
@@ -273,55 +285,68 @@ Respond in this exact JSON format:
 	return analysis, nil
 }
 
-// retrieveRelevantArticles finds articles relevant to the query
+// retrieveRelevantArticles finds articles relevant to the query using semantic search
 func (s *OpenAIService) retrieveRelevantArticles(ctx context.Context, analysis *ai.QueryAnalysisResult, companyContext []string) ([]ai.SourceReference, error) {
-	filter := &news.NewsFilter{
-		Limit:  20,
-		Offset: 0,
+	// Construct search query from analysis
+	searchQuery := strings.Join(analysis.SearchTerms, " ")
+	if searchQuery == "" {
+		searchQuery = strings.Join(analysis.Keywords, " ")
+	}
+	
+	// Generate embedding for the query
+	queryEmbedding, err := s.embeddingService.EmbedQuery(ctx, searchQuery)
+	if err != nil {
+		s.logger.Error("Failed to generate query embedding", "error", err)
+		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// Add company filter
+	// Prepare metadata filters
 	companies := analysis.CompanyNames
 	if len(companyContext) > 0 {
 		companies = append(companies, companyContext...)
 	}
 
-	// Add time window if specified
+	var startDate, endDate *time.Time
 	if analysis.TimeWindow != nil {
-		filter.StartDate = analysis.TimeWindow.StartDate
-		filter.EndDate = analysis.TimeWindow.EndDate
+		startDate = analysis.TimeWindow.StartDate
+		endDate = analysis.TimeWindow.EndDate
 	} else {
 		// Default to recent articles (last 90 days)
 		recent := time.Now().AddDate(0, 0, -90)
-		filter.StartDate = &recent
+		startDate = &recent
 	}
 
-	var allArticles []*news.Article
+	// Search for semantically similar articles
+	searchResults, err := s.vectorRepo.SearchArticles(ctx, queryEmbedding, 20, companies, startDate, endDate)
+	if err != nil {
+		s.logger.Error("Failed to search vector database", "error", err)
+		return nil, fmt.Errorf("failed to search vector database: %w", err)
+	}
 
-	// If specific companies mentioned, get articles for each
-	if len(companies) > 0 {
-		for _, companyName := range companies {
-			filter.Company = companyName
-			articles, _, err := s.newsService.ListArticles(ctx, filter)
-			if err != nil {
-				s.logger.Warn("Failed to get articles for company", "company", companyName, "error", err)
-				continue
-			}
-			allArticles = append(allArticles, articles...)
-		}
-	} else {
-		// Get general articles
-		articles, _, err := s.newsService.ListArticles(ctx, filter)
+	s.logger.Info("Vector search completed", "results", len(searchResults), "companies", companies)
+
+	// Convert search results to source references
+	sources := make([]ai.SourceReference, 0, len(searchResults))
+	for _, result := range searchResults {
+		// Fetch full article from MongoDB
+		article, err := s.newsService.GetArticleByID(ctx, result.ArticleID)
 		if err != nil {
-			return nil, err
+			s.logger.Warn("Failed to get article", "articleID", result.ArticleID, "error", err)
+			continue
 		}
-		allArticles = articles
+
+		sources = append(sources, ai.SourceReference{
+			ArticleID:      article.ID.Hex(),
+			Title:          article.Title,
+			Summary:        article.Summary,
+			CompanyName:    strings.Join(article.Companies, ", "),
+			PublishedDate:  article.PublishedDate,
+			SourceURL:      article.SourceURL,
+			RelevanceScore: result.Score,
+		})
 	}
 
-	// Convert to source references and rank by relevance
-	sources := s.rankArticlesByRelevance(allArticles, analysis)
-	
-	// Return top 10 most relevant
+	// Return top 10 most relevant (already sorted by similarity score)
 	if len(sources) > 10 {
 		sources = sources[:10]
 	}
